@@ -6,27 +6,37 @@ const LOGIN_URL = `${BASE_URL}/user-authorization/user/login`;
 
 // Basic auth token: nsdlab-internal-client:nsdlab-internal-password
 const BASIC_AUTH_TOKEN = 'bnNkbGFiLWludGVybmFsLWNsaWVudDpuc2RsYWItaW50ZXJuYWwtcGFzc3dvcmQ=';
+const FIXED_KEY = 'a6T8tOCYiSzDTrcqPvCbJfy0wSQOVcfaevH0gtwCtoU=';
 
 const api = axios.create();
 
 // Configure Axios interceptor to aggressively defend against expired/invalid tokens globally
 api.interceptors.response.use(
   (response) => {
-    // Trap deeply nested soft-rejection payloads (e.g., 200 OK but body says 401)
     const respData = response.data;
-    if (respData && (respData.status_code === '401' || respData.status_code === 401 || (typeof respData.message === 'string' && respData.message.includes('Unauthorized')))) {
-      handleUnauthorized();
-      return Promise.reject(new Error("Unauthorized soft-rejection"));
-    }
-    if (respData && respData.error && typeof respData.error.message === 'string' && respData.error.message.includes('Token is expired')) {
-      handleUnauthorized();
-      return Promise.reject(new Error("Token is expired"));
+    // Aggressively check for ANY sign of an unauthorized state in the response body
+    if (respData) {
+      const isUnauthorized =
+        respData.status_code === '401' ||
+        respData.status_code === 401 ||
+        respData.status === 401 ||
+        respData.statusCode === 401 ||
+        (respData.message && typeof respData.message === 'string' &&
+          (respData.message.includes('Unauthorized') || respData.message.includes('Token is expired') || respData.message.includes('401'))) ||
+        respData.success === false && (respData.status_code === '401' || respData.status_code === 'UNAUTH0001');
+
+      if (isUnauthorized) {
+        handleUnauthorized();
+        return Promise.reject(new Error("Unauthorized detected in response body"));
+      }
     }
     return response;
   },
   (error) => {
-    // Trigger security protocol if '401 Unauthorized' or '403 Forbidden' HTTP status code
+    // Standard HTTP Status Code handling
     if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+      handleUnauthorized();
+    } else if (error.message && error.message.includes('401')) {
       handleUnauthorized();
     }
     return Promise.reject(error);
@@ -34,11 +44,20 @@ api.interceptors.response.use(
 );
 
 function handleUnauthorized() {
-  console.error("🔒 SECURITY BREACH / EXPIRED TOKEN: Clearing session and forcing exit.");
+  console.error("🔒 SECURITY TRIGGER: Session invalid or expired. Purging state and redirecting.");
+
+  // Nuke everything
   sessionStorage.clear();
   localStorage.clear();
-  // Clear any persistent state and force redirect to login
-  window.location.replace(window.location.origin);
+
+  // Force a hard jump to the login page (root) to kill all component state
+  const loginUrl = window.location.origin + '/';
+  window.location.replace(loginUrl);
+
+  // Fallback if replace is intercepted
+  setTimeout(() => {
+    window.location.href = loginUrl;
+  }, 100);
 }
 
 /**
@@ -119,6 +138,44 @@ export async function getUserDashboard(token) {
       'pass_key': 'QC62FQKXT2DQTO43LMWH5A44UKVPQ7LK5Y6HVHRQ3XTIKLDTB6HA'
     }
   });
+
+  if (response.data && response.data.ResponseData) {
+    return decryptResponse(response.data.ResponseData);
+  }
+
+  return response.data;
+}
+
+/**
+ * Fetch User List by Date Range and Status
+ * Endpoint: https://apidev-sdk.iserveu.online/NSDL/user_onboarding_report/fetch-user-list
+ */
+export async function getUserListByDateRange(token, params = {}) {
+  const URL = "https://apidev-sdk.iserveu.online/NSDL/user_onboarding_report/fetch-user-list";
+  const { startDate, endDate, status, role, username } = params;
+
+  // Exact request body format
+  const payload = {
+    status: status || 'ALL',
+    username: username, // Logged in userName
+    startDate: startDate,
+    endDate: endDate,
+    role: role || 'ALL'
+  };
+
+  const encryptedPayload = encryptPayload(payload);
+
+  const response = await api.post(
+    URL,
+    { RequestData: encryptedPayload },
+    {
+      headers: {
+        'key': FIXED_KEY,
+        'pass_key': 'QC62FQKXT2DQTO43LMWH5A44UKVPQ7LK5Y6HVHRQ3XTIKLDTB6HA',
+        'Authorization': token
+      }
+    }
+  );
 
   if (response.data && response.data.ResponseData) {
     return decryptResponse(response.data.ResponseData);

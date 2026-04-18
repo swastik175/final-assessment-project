@@ -56,8 +56,8 @@ const LoginForm = ({ onLoginSuccess }) => {
       
       const token = response?.access_token || response?.userInfo?.token || response?.data?.access_token;
       
-      // Trigger Change Password if backend flag is true (mocking common scenario)
-      if (response?.isFirstLogin || response?.passwordExpired || response?.message?.includes('change')) {
+      // Step 1: Detect if reset is required
+      if (response?.isPasswordResetRequired === true) {
         setIsLoading(false);
         setCpForm({ oldPwd: password, newPwd: '', confirmPwd: '' });
         setShowChangePwd(true);
@@ -105,42 +105,34 @@ const LoginForm = ({ onLoginSuccess }) => {
     e.preventDefault();
     setCpError('');
 
-    if (!cpForm.oldPwd) return setCpError('Old password is required.');
+    if (!cpForm.oldPwd || !cpForm.newPwd || !cpForm.confirmPwd) {
+      return setCpError('All fields are mandatory.');
+    }
     
     const pError = validatePassword(cpForm.newPwd);
     if (pError) return setCpError(pError);
 
     if (cpForm.newPwd !== cpForm.confirmPwd) {
-      return setCpError('New Password and Confirm Password do not match.');
+      return setCpError('Passwords do not match.');
     }
 
     if (cpForm.oldPwd === cpForm.newPwd) {
-      return setCpError('New Password cannot be the same as the old password.');
+      return setCpError('New Password cannot be same as old.');
     }
 
+    // Logic for "Verify Otp" - Collect data and wait for next step
+    console.log('Verifying OTP for password change:', {
+      old: cpForm.oldPwd,
+      new: cpForm.newPwd,
+      confirm: cpForm.confirmPwd
+    });
+    
+    // For now, just show a success or processing log as per user request
     setIsLoading(true);
-
-    try {
-      // Simulate API call for changing password
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // In reality, you'd call changePassword API here
-      console.log('Password Changed for:', username);
-
-      setShowChangePwd(false);
-      setModal({
-        show: true,
-        title: 'SUCCESS',
-        message: 'Password changed successfully. Please login with new password.',
-        type: 'success'
-      });
-      setPassword('');
-      
-    } catch (error) {
-      setCpError('Failed to change password. Please try again.');
-    } finally {
+    setTimeout(() => {
       setIsLoading(false);
-    }
+      alert('OTP Verification Triggered. Proceeding to next step...');
+    }, 1000);
   };
 
   const handleModalClose = () => {
@@ -151,15 +143,23 @@ const LoginForm = ({ onLoginSuccess }) => {
     }
   };
 
+  const handleCancelReset = () => {
+    setShowChangePwd(false);
+    setUsername('');
+    setPassword('');
+    sessionStorage.clear();
+    // This effectively keeps them on the login page as we didn't call onLoginSuccess
+  };
+
   const valRules = getPwdValidationObj(cpForm.newPwd);
 
   return (
     <>
       {/* Full Screen Loader overlay */}
       {isLoading && (
-        <div className="full-screen-loader">
+        <div className="full-screen-loader" style={{ zIndex: 30000 }}>
           <div className="spinner"></div>
-          <div style={{ color: '#8B0304', fontWeight: '500' }}>Processing Request...</div>
+          <div style={{ color: '#8B0304', fontWeight: '500' }}>Processing...</div>
         </div>
       )}
 
@@ -193,9 +193,9 @@ const LoginForm = ({ onLoginSuccess }) => {
               disabled={isLoading || showChangePwd}
             >
               {showPassword ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
               ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
               )}
             </button>
           </div>
@@ -206,7 +206,7 @@ const LoginForm = ({ onLoginSuccess }) => {
             <label className="remember_me_text">
               <input type="checkbox" disabled={isLoading || showChangePwd} /> Remember me
             </label>
-            <a href="#" className="forgot-password-link" onClick={() => setShowChangePwd(true)}>Change Password?</a>
+            <a href="#" className="forgot-password-link">Forgot Password?</a>
           </div>
 
           <button type="submit" className="login_btn" disabled={isLoading || showChangePwd}>
@@ -214,76 +214,69 @@ const LoginForm = ({ onLoginSuccess }) => {
           </button>
         </form>
 
-        {/* Change Password Modal */}
+        {/* Change Password Modal (Matching Screenshot) */}
         {showChangePwd && (
-          <div className="nsdl-modal-overlay">
-            <div className="nsdl-modal change-pwd-modal">
-              <div className="nsdl-modal-header" style={{ color: '#8B0304' }}>Change Password</div>
-              <div className="nsdl-modal-body">
-                <form onSubmit={handleChangePasswordSubmit}>
-                  
-                  <div className="form-field">
-                    <input
-                      type={showCpPwd.old ? 'text' : 'password'}
-                      placeholder="Old Password*"
-                      value={cpForm.oldPwd}
-                      onChange={e => setCpForm({...cpForm, oldPwd: e.target.value})}
-                      disabled={isLoading}
-                    />
-                    <button type="button" className="pwd-toggle" onClick={() => setShowCpPwd({...showCpPwd, old: !showCpPwd.old})}>
-                       {showCpPwd.old ? 'Hide' : 'Show'}
-                    </button>
-                  </div>
+          <div className="nsdl-modal-overlay" style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)' }}>
+            <div className="change-pwd-card" style={{ background: '#fff', width: '420px', borderRadius: '8px', padding: '32px', boxShadow: '0 12px 48px rgba(0,0,0,0.15)', textAlign: 'center' }}>
+              <h2 style={{ margin: '0 0 8px', fontSize: '24px', fontWeight: 600, color: '#333' }}>Change Password</h2>
+              <p style={{ margin: '0 0 24px', fontSize: '14px', color: '#666' }}>Enter your old password and new password</p>
 
-                  <div className="form-field">
-                    <input
-                      type={showCpPwd.new ? 'text' : 'password'}
-                      placeholder="New Password*"
-                      value={cpForm.newPwd}
-                      onChange={e => {
-                        setCpForm({...cpForm, newPwd: e.target.value});
-                        if (cpError) setCpError('');
-                      }}
-                      disabled={isLoading}
-                    />
-                    <button type="button" className="pwd-toggle" onClick={() => setShowCpPwd({...showCpPwd, new: !showCpPwd.new})}>
-                       {showCpPwd.new ? 'Hide' : 'Show'}
-                    </button>
-                    {/* Live Validation Guidance */}
-                    {cpForm.newPwd.length > 0 && (
-                      <ul className="validation-list">
-                        <li className={valRules.length ? 'valid' : 'invalid'}>8-16 characters</li>
-                        <li className={valRules.upper ? 'valid' : 'invalid'}>At least one uppercase letter</li>
-                        <li className={valRules.lower ? 'valid' : 'invalid'}>At least one lowercase letter</li>
-                        <li className={valRules.number ? 'valid' : 'invalid'}>At least one number</li>
-                        <li className={valRules.special ? 'valid' : 'invalid'}>At least one special character (@$!%*?&)</li>
-                      </ul>
-                    )}
-                  </div>
-
-                  <div className="form-field" style={{ marginBottom: 0 }}>
-                    <input
-                      type={showCpPwd.confirm ? 'text' : 'password'}
-                      placeholder="Confirm New Password*"
-                      value={cpForm.confirmPwd}
-                      onChange={e => setCpForm({...cpForm, confirmPwd: e.target.value})}
-                      disabled={isLoading}
-                    />
-                    <button type="button" className="pwd-toggle" onClick={() => setShowCpPwd({...showCpPwd, confirm: !showCpPwd.confirm})}>
-                       {showCpPwd.confirm ? 'Hide' : 'Show'}
-                    </button>
-                  </div>
-
-                  {cpError && <div className="field-error-msg" style={{ marginTop: '8px' }}>{cpError}</div>}
-
-                  <button type="submit" className="login_btn" disabled={isLoading}>
-                    Submit
+              <form onSubmit={handleChangePasswordSubmit}>
+                <div className="form-field" style={{ position: 'relative', marginBottom: '16px' }}>
+                  <input
+                    type={showCpPwd.old ? 'text' : 'password'}
+                    placeholder="Old Password*"
+                    value={cpForm.oldPwd}
+                    onChange={e => setCpForm({...cpForm, oldPwd: e.target.value})}
+                    style={{ width: '100%', height: '48px', padding: '0 45px 0 12px', border: '1px solid #d9d9d9', borderRadius: '4px', fontSize: '14px' }}
+                  />
+                  <button type="button" onClick={() => setShowCpPwd({...showCpPwd, old: !showCpPwd.old})} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#595959' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                       {showCpPwd.old ? <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /> : <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />}
+                       <circle cx="12" cy="12" r="3" />
+                    </svg>
                   </button>
-                </form>
-              </div>
-              <div className="nsdl-modal-footer">
-                <button onClick={() => setShowChangePwd(false)} disabled={isLoading}>Cancel</button>
-              </div>
+                </div>
+
+                <div className="form-field" style={{ position: 'relative', marginBottom: '16px' }}>
+                  <input
+                    type={showCpPwd.new ? 'text' : 'password'}
+                    placeholder="New Password*"
+                    value={cpForm.newPwd}
+                    onChange={e => setCpForm({...cpForm, newPwd: e.target.value})}
+                    style={{ width: '100%', height: '48px', padding: '0 45px 0 12px', border: '1px solid #d9d9d9', borderRadius: '4px', fontSize: '14px' }}
+                  />
+                  <button type="button" onClick={() => setShowCpPwd({...showCpPwd, new: !showCpPwd.new})} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#595959' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                       {showCpPwd.new ? <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /> : <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />}
+                       <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="form-field" style={{ position: 'relative', marginBottom: '24px' }}>
+                  <input
+                    type={showCpPwd.confirm ? 'text' : 'password'}
+                    placeholder="Confirm Password*"
+                    value={cpForm.confirmPwd}
+                    onChange={e => setCpForm({...cpForm, confirmPwd: e.target.value})}
+                    style={{ width: '100%', height: '48px', padding: '0 45px 0 12px', border: '1px solid #d9d9d9', borderRadius: '4px', fontSize: '14px' }}
+                  />
+                  <button type="button" onClick={() => setShowCpPwd({...showCpPwd, confirm: !showCpPwd.confirm})} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#595959' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                       {showCpPwd.confirm ? <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /> : <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />}
+                       <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  </button>
+                </div>
+
+                {cpError && <div style={{ color: '#a80000', fontSize: '13px', marginBottom: '16px', textAlign: 'left' }}>{cpError}</div>}
+
+                <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
+                  <button type="button" onClick={handleCancelReset} style={{ flex: 1, height: '44px', background: '#fff', border: '1px solid #a80000', color: '#a80000', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                  <button type="submit" style={{ flex: 1, height: '44px', background: '#8B0304', border: 'none', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>Verify Otp</button>
+                </div>
+              </form>
             </div>
           </div>
         )}

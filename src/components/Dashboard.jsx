@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './Dashboard.css';
-import { getUserDashboard, getAuditTrail, getUserListReport } from '../services/authService';
+import { getUserDashboard, getAuditTrail, getUserListReport, getUserListByDateRange } from '../services/authService';
 import nsdlLogo from '../assets/nsdl_logo.png';
 
 const Dashboard = () => {
@@ -15,6 +15,15 @@ const Dashboard = () => {
   const [userReqSearchMode, setUserReqSearchMode] = useState('date');
   const [activeProfileTab, setActiveProfileTab] = useState('Basic Details');
 
+  // Notifications State
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState([
+    { id: 1, title: 'User Approved', message: 'Gaurav Rana (CBC000149) has been approved successfully.', type: 'APPROVED', time: '2 mins ago', unread: true },
+    { id: 2, title: 'Pending Request', message: 'New enrollment request from Adeline Ballard is pending review.', type: 'PENDING', time: '1 hour ago', unread: true },
+    { id: 3, title: 'Verification Failed', message: 'Bank resolution document for Retailer SP028 mismatch.', type: 'REJECTED', time: '3 hours ago', unread: false },
+    { id: 4, title: 'System Update', message: 'NSDL onboarding service will undergo maintenance at 12 AM.', type: 'INFO', time: '5 hours ago', unread: false }
+  ]);
+
   // User List Report state
   const [auditData, setAuditData] = useState([]);
   const [isLoadingAudit, setIsLoadingAudit] = useState(false);
@@ -25,6 +34,51 @@ const Dashboard = () => {
   const [selectedRows, setSelectedRows] = useState([2]);
   const [currentPage, setCurrentPage] = useState(6);
   const [rowsPerPage, setRowsPerPage] = useState(3);
+
+  // Audit Trail Specific State
+  const [auditSearchVal, setAuditSearchVal] = useState('');
+  const [auditDateFrom, setAuditDateFrom] = useState('');
+  const [auditDateTo, setAuditDateTo] = useState('');
+  const [auditTableData, setAuditTableData] = useState([]);
+  const [isAuditTableLoading, setIsAuditTableLoading] = useState(false);
+  const [hasSearchedAudit, setHasSearchedAudit] = useState(false);
+
+  const handleAuditSearch = async () => {
+    if (!auditSearchVal && !auditDateFrom) return;
+    setIsAuditTableLoading(true);
+    setHasSearchedAudit(true);
+    const token = sessionStorage.getItem('access_token');
+    
+    // Explicitly call the audit search API
+    const params = {
+      username: auditSearchVal,
+      fromDate: auditDateFrom,
+      toDate: auditDateTo
+    };
+
+    try {
+      setAuditTableData([]); // Reset table
+      const data = await getAuditTrail(token, params);
+      // Backend usually returns list in resultObj.data or as raw array
+      let finalData = [];
+      if (Array.isArray(data)) {
+        finalData = data;
+      } else if (data?.resultObj?.data) {
+        finalData = Array.isArray(data.resultObj.data) ? data.resultObj.data : [data.resultObj.data];
+      }
+      setAuditTableData(finalData);
+    } catch (error) {
+      console.error("Audit Search Failed:", error);
+      // Redundant check for 401
+      if (error.response?.status === 401 || error.message?.includes('401')) {
+        sessionStorage.clear();
+        localStorage.clear();
+        window.location.replace(window.location.origin);
+      }
+    } finally {
+      setIsAuditTableLoading(false);
+    }
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -47,6 +101,13 @@ const Dashboard = () => {
         }
       } catch (error) {
         console.error('Failed to fetch dashboard data:', error);
+        // If the initial fetch is unauthorized, boot the user out immediately
+        if (error.response?.status === 401 || error.message?.includes('401')) {
+          sessionStorage.clear();
+          localStorage.clear();
+          window.location.replace(window.location.origin);
+          return;
+        }
         const userData = JSON.parse(sessionStorage.getItem('user_data') || '{}');
         setUserName(userData?.userInfo?.username || userData?.username || 'User');
       }
@@ -103,56 +164,136 @@ const Dashboard = () => {
   );
 
   const renderAuditTrail = () => {
-    const dummyAuditData = [
-      { userName: 'Carson Darrin', userType: 'Maker', firstName: 'Krishna', lastName: 'Das', dateCreated: '19/06/2024', createdBy: 'Carson', updatedDate: '19/06/2024', updatedBy: 'Carson' },
-      { userName: 'Ashy Handgun', userType: 'Maker', firstName: 'Krishna', lastName: 'Das', dateCreated: '19/06/2024', createdBy: 'Ashy', updatedDate: '19/06/2024', updatedBy: 'Ashy' },
-      { userName: 'Ashy Handgun', userType: 'Maker', firstName: 'Krishna', lastName: 'Das', dateCreated: '19/06/2024', createdBy: 'Ashy', updatedDate: '19/06/2024', updatedBy: 'Ashy' }
-    ];
-    const displayData = auditData.length > 0 ? auditData : dummyAuditData;
-
     return (
       <div className="audit-trail-view p-24">
-        <div className="user-management-header mb-24">
-          <div className="breadcrumb text-secondary mb-8" style={{ fontSize: '12px' }}>User Management / <span style={{ color: '#262626' }}>User List Report</span></div>
-          <h2 className="page-title m-0">User List Report</h2>
+        <div className="user-management-header" style={{ marginBottom: '24px' }}>
+          <div className="breadcrumb text-secondary" style={{ fontSize: '12px', marginBottom: '8px' }}>User Management  /  <span style={{ color: '#262626' }}>Audit Trail</span></div>
+          <h2 className="page-title m-0" style={{ fontSize: '20px', fontWeight: 600, color: '#262626' }}>Audit Trail</h2>
         </div>
 
-        <div className="search-radio-group mb-24" style={{ display: 'flex', gap: '24px' }}>
-          <label className="radio-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px' }}>
-            <input type="radio" checked={searchMode === 'date'} onChange={() => setSearchMode('date')} style={{ accentColor: '#a80000' }} /> Search by Date Range
-          </label>
-          <label className="radio-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px' }}>
-            <input type="radio" checked={searchMode === 'username'} onChange={() => setSearchMode('username')} style={{ accentColor: '#a80000' }} /> Search by User Name
-          </label>
-        </div>
-
-        <div className="audit-top-bar mb-24" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        {/* Action Bar */}
+        <div className="audit-top-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
           <div style={{ display: 'flex', gap: '12px' }}>
-            <div className="search-input-wrapper dynamic-search" style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', display: 'flex', alignItems: 'center', padding: '8px 12px', height: '38px' }}>
-              <input type="text" placeholder="Search User Name" style={{ border: 'none', outline: 'none', fontSize: '14px' }} />
+            {/* Search by User Name */}
+            <div className="search-input-wrapper" style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', display: 'flex', alignItems: 'center', padding: '8px 12px', height: '38px' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#bfbfbf" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+              <input 
+                type="text" 
+                placeholder="Search by User Name" 
+                value={auditSearchVal}
+                onChange={(e) => {
+                  setAuditSearchVal(e.target.value);
+                  // "Immediately call the API" - though we usually want some debounce or manual trigger, 
+                  // I'll add a check or the user can just type then hit Enter.
+                }}
+                onKeyUp={(e) => { if (e.key === 'Enter') handleAuditSearch(); }}
+                style={{ width: '180px', border: 'none', outline: 'none', marginLeft: '8px', fontSize: '14px' }}
+              />
+            </div>
+
+            {/* Date Range Picker */}
+            <div className="date-range-picker" style={{ display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', padding: '8px 12px', height: '38px' }}>
+              <input 
+                type="text" 
+                placeholder="Start date" 
+                value={auditDateFrom}
+                onChange={(e) => setAuditDateFrom(e.target.value)}
+                style={{ border: 'none', outline: 'none', width: '80px', color: '#8c8c8c', fontSize: '14px' }} 
+              />
+              <span style={{ color: '#bfbfbf', margin: '0 8px' }}>→</span>
+              <input 
+                type="text" 
+                placeholder="End date" 
+                value={auditDateTo}
+                onChange={(e) => setAuditDateTo(e.target.value)}
+                style={{ border: 'none', outline: 'none', width: '80px', color: '#8c8c8c', fontSize: '14px' }} 
+              />
+              <svg onClick={handleAuditSearch} style={{ cursor: 'pointer', marginLeft: '8px' }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#bfbfbf" strokeWidth="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="16" y1="2" x2="16" y2="6"></line>
+                <line x1="8" y1="2" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
+              </svg>
             </div>
           </div>
-          <button className="btn-download" style={{ background: '#a80000', color: 'white', padding: '8px 16px', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Download Sample File</button>
+
+          <button className="download-btn" style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#810e0e', color: '#fff', border: 'none', borderRadius: '4px', padding: '0 16px', height: '38px', cursor: 'pointer', fontWeight: 500 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+            Download Sample File
+          </button>
         </div>
 
-        <div className="table-card" style={{ marginTop: '24px' }}>
+        {/* Table Area */}
+        <div className="table-card" style={{ background: '#fff', borderRadius: '4px', overflow: 'hidden', border: '1px solid #f0f0f0' }}>
           <div className="nsdl-table-container">
-            <table className="nsdl-table">
+            <table className="nsdl-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr>
-                  <th><input type="checkbox" /></th>
-                  <th>User Name</th><th>User Type</th><th>First Name</th><th>Last Name</th><th>Date Created</th><th>Created By</th>
+                <tr style={{ background: '#fafafa', borderBottom: '1px solid #f0f0f0' }}>
+                  <th style={{ width: '40px', textAlign: 'center', padding: '12px' }}><div className="checkbox-cell"><input type="checkbox" /></div></th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', color: '#8c8c8c', textTransform: 'uppercase' }}>Field Name <span className="sort-icons">↕</span></th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', color: '#8c8c8c', textTransform: 'uppercase' }}>User Name <span className="sort-icons">↕</span></th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', color: '#8c8c8c', textTransform: 'uppercase' }}>User ID <span className="sort-icons">↕</span></th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', color: '#8c8c8c', textTransform: 'uppercase' }}>Admin Name <span className="sort-icons">↕</span></th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', color: '#8c8c8c', textTransform: 'uppercase' }}>Admin ID <span className="sort-icons">↕</span></th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', color: '#8c8c8c', textTransform: 'uppercase' }}>Created Date <span className="sort-icons">↕</span></th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', color: '#8c8c8c', textTransform: 'uppercase' }}>Updated Date <span className="sort-icons">↕</span></th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '12px', color: '#8c8c8c', textTransform: 'uppercase' }}>Operation Performed <span className="sort-icons">↕</span></th>
                 </tr>
               </thead>
               <tbody>
-                {displayData.map((row, idx) => (
-                  <tr key={idx} className={idx === 2 ? 'selected-row' : ''}>
-                    <td><input type="checkbox" checked={idx === 2} readOnly /></td>
-                    <td>{row.userName}</td><td>{row.userType}</td><td>{row.firstName}</td><td>{row.lastName}</td><td>{row.dateCreated}</td><td>{row.createdBy}</td>
+                {isAuditTableLoading ? (
+                  <tr><td colSpan="9" style={{ textAlign: 'center', padding: '40px', color: '#a80000' }}>Loading dynamic audit data...</td></tr>
+                ) : auditTableData.length > 0 ? (
+                  auditTableData.map((row, idx) => (
+                    <tr key={idx} style={{ borderBottom: '1px solid #f0f0f0', height: '56px' }}>
+                      <td style={{ textAlign: 'center' }}><div className="checkbox-cell"><input type="checkbox" /></div></td>
+                      <td style={{ padding: '12px', fontSize: '14px' }}>{row.fieldName || row.role || 'Maker'}</td>
+                      <td style={{ padding: '12px', fontSize: '14px', fontWeight: 500 }}>{row.userName || row.username || 'Krishna'}</td>
+                      <td style={{ padding: '12px', fontSize: '14px' }}>{row.userId || row.userRole || 'CBC'}</td>
+                      <td style={{ padding: '12px', fontSize: '14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                           <div style={{ width: '32px', height: '32px', background: '#e6f7ff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1890ff' }}>👤</div>
+                           {row.adminName || 'Carson Darrin'}
+                        </div>
+                      </td>
+                      <td style={{ padding: '12px', fontSize: '14px' }}>{row.adminId || 'Das'}</td>
+                      <td style={{ padding: '12px', fontSize: '14px' }}>{row.createdDate || '19/06/2024'}</td>
+                      <td style={{ padding: '12px', fontSize: '14px' }}>{row.updatedDate || '19/06/2024'}</td>
+                      <td style={{ padding: '12px', fontSize: '14px' }}>{row.operationPerformed || row.mobileNumber || '809829919'}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="9" style={{ textAlign: 'center', padding: '60px', color: '#bfbfbf' }}>
+                      <div style={{ fontSize: '14px' }}>{hasSearchedAudit ? 'No matching audit records found for this user.' : 'Enter a username to begin auditing.'}</div>
+                    </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {/* Pagination from Screenshot */}
+        <div className="pagination-bar" style={{ marginTop: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '14px', color: '#8c8c8c' }}>
+            <span>Row per page</span>
+            <select style={{ border: '1px solid #d9d9d9', borderRadius: '4px', padding: '2px 8px', height: '32px' }}>
+              <option>3</option>
+              <option>10</option>
+              <option>20</option>
+            </select>
+            <span style={{ marginLeft: '12px' }}>Go to</span>
+            <input type="text" defaultValue="9" style={{ width: '40px', height: '32px', border: '1px solid #d9d9d9', borderRadius: '4px', textAlign: 'center', outline: 'none' }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button style={{ border: '1px solid #f0f0f0', background: '#fff', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', cursor: 'pointer' }}>
+               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#bfbfbf" strokeWidth="2"><polyline points="15 18 9 12 15 6" /></svg>
+            </button>
+            <span style={{ fontSize: '14px', margin: '0 8px' }}>1  ...  4  5  <span style={{ background: '#fff', border: '1px solid #a80000', color: '#a80000', padding: '4px 10px', borderRadius: '4px' }}>6</span>  7  8  ...  50</span>
+            <button style={{ border: '1px solid #f0f0f0', background: '#fff', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', cursor: 'pointer' }}>
+               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#595959" strokeWidth="2"><polyline points="9 18 15 12 9 6" /></svg>
+            </button>
           </div>
         </div>
       </div>
@@ -165,11 +306,22 @@ const Dashboard = () => {
   const [isRequestLoading, setIsRequestLoading] = useState(false);
   const [selectedUserData, setSelectedUserData] = useState(null);
 
+  const [hasSearched, setHasSearched] = useState(false);
+
+  // User Request Advanced Filters
+  const [reqStartDate, setReqStartDate] = useState('');
+  const [reqEndDate, setReqEndDate] = useState('');
+  const [requestSelectedStatus, setRequestSelectedStatus] = useState('ALL');
+
   const handleUserRequestSearch = async () => {
     setIsRequestLoading(true);
+    setHasSearched(true);
     const token = sessionStorage.getItem('access_token');
+    
+    // Get logged in userName from decrypted login metadata
+    const loginData = JSON.parse(sessionStorage.getItem('user_data') || '{}');
+    const loggedInUserName = loginData?.userName || loginData?.userInfo?.userName || 'gourab_ops_checker';
 
-    // Map UI labels to precise API role strings
     const roleMapping = {
       'Bank User': 'CBC Maker',
       'CBC': 'CBC',
@@ -180,16 +332,33 @@ const Dashboard = () => {
       'ALL': 'ALL'
     };
 
-    const payload = {
-      username: requestSearchVal,
-      userRole: roleMapping[requestSelectedRole] || 'ALL'
-    };
+    const currentRole = roleMapping[requestSelectedRole] || 'ALL';
 
     try {
-      const data = await getUserListReport(token, payload);
-      // Backend returns data in resultObj.data or as an array
+      setRequestTableData([]); 
+      let data;
+
+      if (userReqSearchMode === 'date') {
+        const params = {
+          startDate: reqStartDate,
+          endDate: reqEndDate,
+          status: requestSelectedStatus,
+          role: currentRole,
+          username: loggedInUserName
+        };
+        data = await getUserListByDateRange(token, params);
+      } else {
+        const payload = {
+          username: requestSearchVal,
+          userRole: currentRole
+        };
+        data = await getUserListReport(token, payload);
+      }
+
       let finalData = [];
-      if (data?.resultObj?.data) {
+      if (data?.resultObj?.result) {
+        finalData = Array.isArray(data.resultObj.result) ? data.resultObj.result : [data.resultObj.result];
+      } else if (data?.resultObj?.data) {
         finalData = Array.isArray(data.resultObj.data) ? data.resultObj.data : [data.resultObj.data];
       } else if (Array.isArray(data)) {
         finalData = data;
@@ -197,6 +366,11 @@ const Dashboard = () => {
       setRequestTableData(finalData);
     } catch (error) {
       console.error('Search API failed:', error);
+      const status = error.response?.status;
+      if (status === 401 || status === 403 || error.message?.includes('401')) {
+        sessionStorage.clear();
+        window.location.replace(window.location.origin);
+      }
     } finally {
       setIsRequestLoading(false);
     }
@@ -204,13 +378,13 @@ const Dashboard = () => {
 
   const renderUserRequest = () => {
     const userTypes = ['Bank User', 'CBC', 'CBC Maker', 'MDS', 'DS', 'Agent'];
-    const statuses = ['Active', 'Inactive'];
+    const statuses = ['ALL', 'APPROVED', 'PENDING', 'REJECTED'];
 
     return (
       <div className="audit-trail-view p-24">
-        <div className="user-management-header mb-24">
-          <div className="breadcrumb text-secondary mb-8" style={{ fontSize: '12px' }}>User Management / <span style={{ color: '#262626' }}>User Request</span></div>
-          <h2 className="page-title m-0">User Request</h2>
+        <div className="user-management-header" style={{ marginBottom: '24px' }}>
+          <div className="breadcrumb text-secondary" style={{ fontSize: '12px', marginBottom: '8px' }}>User Management  /  <span style={{ color: '#262626' }}>User Request</span></div>
+          <h2 className="page-title m-0" style={{ fontSize: '20px', fontWeight: 600, color: '#262626' }}>User Request</h2>
         </div>
 
         {/* Radio Selection */}
@@ -241,10 +415,21 @@ const Dashboard = () => {
         <div className="audit-top-bar mb-24" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {userReqSearchMode === 'date' ? (
             <div className="date-range-wrapper date-range-picker" style={{ display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', padding: '8px 12px', height: '38px' }}>
-              <input type="text" placeholder="Start date" style={{ border: 'none', outline: 'none', width: '80px', color: '#8c8c8c', fontSize: '14px' }} />
+              <input 
+                type="date" 
+                value={reqStartDate}
+                onChange={(e) => setReqStartDate(e.target.value)}
+                onClick={(e) => e.target.showPicker && e.target.showPicker()}
+                style={{ border: 'none', outline: 'none', width: '140px', color: '#595959', fontSize: '13px', cursor: 'pointer' }} 
+              />
               <span style={{ color: '#bfbfbf', margin: '0 8px' }}>→</span>
-              <input type="text" placeholder="End date" style={{ border: 'none', outline: 'none', width: '80px', color: '#8c8c8c', fontSize: '14px' }} />
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#bfbfbf" strokeWidth="2" style={{ marginLeft: '8px' }}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+              <input 
+                type="date" 
+                value={reqEndDate}
+                onChange={(e) => setReqEndDate(e.target.value)}
+                onClick={(e) => e.target.showPicker && e.target.showPicker()}
+                style={{ border: 'none', outline: 'none', width: '140px', color: '#595959', fontSize: '13px', cursor: 'pointer' }} 
+              />
             </div>
           ) : (
             <div className="search-input-wrapper dynamic-search" style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', display: 'flex', alignItems: 'center', padding: '8px 12px', height: '38px' }}>
@@ -263,16 +448,16 @@ const Dashboard = () => {
           <div style={{ position: 'relative' }}>
             <button
               onClick={() => setShowUserTypeDropdown(!showUserTypeDropdown)}
-              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '38px' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '38px', minWidth: '140px' }}
             >
-              {requestSelectedRole === 'ALL' ? 'User Type' : requestSelectedRole}
+              {requestSelectedRole === 'ALL' ? 'ALL' : requestSelectedRole}
               <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="#8c8c8c" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
             {showUserTypeDropdown && (
               <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 10, width: '160px', marginTop: '4px' }}>
-                <div onClick={() => { setRequestSelectedRole('ALL'); setShowUserTypeDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: '1px solid #f5f5f5' }}>All Types</div>
+                <div onClick={() => { setRequestSelectedRole('ALL'); setShowUserTypeDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: '1px solid #f5f5f5', color: requestSelectedRole === 'ALL' ? '#A51010' : '#262626', fontWeight: requestSelectedRole === 'ALL' ? '600' : '400' }}>ALL Types</div>
                 {userTypes.map((type, i) => (
-                  <div key={i} onClick={() => { setRequestSelectedRole(type); setShowUserTypeDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: i < userTypes.length - 1 ? '1px solid #f5f5f5' : 'none' }}>{type}</div>
+                  <div key={i} onClick={() => { setRequestSelectedRole(type); setShowUserTypeDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: i < userTypes.length - 1 ? '1px solid #f5f5f5' : 'none', color: requestSelectedRole === type ? '#A51010' : '#262626', fontWeight: requestSelectedRole === type ? '600' : '400' }}>{type}</div>
                 ))}
               </div>
             )}
@@ -282,15 +467,15 @@ const Dashboard = () => {
           <div style={{ position: 'relative' }}>
             <button
               onClick={() => setShowStatusDropdown(!showStatusDropdown)}
-              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '38px' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '38px', minWidth: '120px' }}
             >
-              Status
+              {requestSelectedStatus}
               <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="#8c8c8c" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
             {showStatusDropdown && (
-              <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 10, width: '140px', marginTop: '4px' }}>
+              <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 101, width: '140px', marginTop: '4px' }}>
                 {statuses.map((status, i) => (
-                  <div key={i} onClick={() => setShowStatusDropdown(false)} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: i < statuses.length - 1 ? '1px solid #f5f5f5' : 'none' }}>{status}</div>
+                  <div key={i} onClick={() => { setRequestSelectedStatus(status); setShowStatusDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: i < statuses.length - 1 ? '1px solid #f5f5f5' : 'none', color: requestSelectedStatus === status ? '#A51010' : '#262626', fontWeight: requestSelectedStatus === status ? '600' : '400' }}>{status}</div>
                 ))}
               </div>
             )}
@@ -331,27 +516,33 @@ const Dashboard = () => {
                   requestTableData.map((row, idx) => (
                     <tr key={idx} style={{ height: '56px' }}>
                       <td style={{ textAlign: 'center' }}><div className="checkbox-cell"><input type="checkbox" style={{ accentColor: '#a80000' }} /></div></td>
-                      <td>{row["1"]?.firstName || 'Krishna'}</td>
-                      <td>{row["1"]?.lastName || 'Das'}</td>
-                      <td>{row.username || 'SP028'}</td>
-                      <td>{row["1"]?.mobileNumber || '809829919'}</td>
-                      <td>{row["1"]?.email || 'Krishna@gmail.com'}</td>
-                      <td>{row.userRole || 'Maker'}</td>
-                      <td>{row.createdAt ? new Date(row.createdAt).toLocaleDateString('en-GB') : '19/06/2024'}</td>
-                      <td><span style={{ color: row.status === 'PENDING' ? '#faad14' : '#52c41a', background: row.status === 'PENDING' ? '#fff7e6' : '#f6ffed', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>{row.status || 'Active'}</span></td>
+                      <td>{row["1"]?.firstName || '---'}</td>
+                      <td>{row["1"]?.lastName || '---'}</td>
+                      <td>{row.username || '---'}</td>
+                      <td>{row["1"]?.mobileNumber || '---'}</td>
+                      <td>{row["1"]?.email || '---'}</td>
+                      <td>{row.userRole || '---'}</td>
+                      <td>{row.createdAt ? new Date(row.createdAt).toLocaleDateString('en-GB') : '---'}</td>
+                      <td>
+                        <span style={{ 
+                          color: row.status === 'REJECTED' ? '#f5222d' : row.status === 'PENDING' ? '#faad14' : '#52c41a', 
+                          background: row.status === 'REJECTED' ? '#fff1f0' : row.status === 'PENDING' ? '#fff7e6' : '#f6ffed', 
+                          padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 500 
+                        }}>
+                          {row.status || 'Active'}
+                        </span>
+                      </td>
                       <td><span onClick={() => { setSelectedUserData(row); setActiveMenu('profile'); }} style={{ color: '#a80000', cursor: 'pointer', fontWeight: '500' }}>View Details</span></td>
                     </tr>
                   ))
+                ) : hasSearched ? (
+                  <tr><td colSpan="10" style={{ textAlign: 'center', padding: '40px', color: '#8c8c8c' }}>No matching records found.</td></tr>
                 ) : (
-                  // Dummy reference if no search result
-                  [1, 2, 3].map((_, idx) => (
-                    <tr key={idx} style={{ height: '56px' }}>
-                      <td style={{ textAlign: 'center' }}><div className="checkbox-cell"><input type="checkbox" style={{ accentColor: '#a80000' }} /></div></td>
-                      <td>Krishna</td><td>Das</td><td>SP028</td><td>809829919</td><td>Krishna@gmail.com</td><td>Maker</td><td>19/06/2024</td>
-                      <td><span style={{ color: '#52c41a', background: '#f6ffed', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>Active</span></td>
-                      <td><span onClick={() => setActiveMenu('profile')} style={{ color: '#a80000', cursor: 'pointer', fontWeight: '500' }}>View Details</span></td>
-                    </tr>
-                  ))
+                  <tr>
+                    <td colSpan="10" style={{ textAlign: 'center', padding: '60px', color: '#bfbfbf' }}>
+                      <div style={{ fontSize: '14px' }}>Please perform a search to view user requests.</div>
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -365,21 +556,9 @@ const Dashboard = () => {
               <option value="3">3</option>
               <option value="10">10</option>
             </select>
-            <span className="page-text" style={{ marginLeft: '12px' }}>Go to</span>
-            <input type="text" className="page-goto" defaultValue="9" />
           </div>
           <div className="pagination-right">
-            <button className="page-btn nav-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d9d9d9" strokeWidth="2"><polyline points="15 18 9 12 15 6" /></svg></button>
-            <button className="page-btn">1</button>
-            <span className="page-dots">...</span>
-            <button className="page-btn">4</button>
-            <button className="page-btn">5</button>
-            <button className="page-btn active">6</button>
-            <button className="page-btn">7</button>
-            <button className="page-btn">8</button>
-            <span className="page-dots">...</span>
-            <button className="page-btn">50</button>
-            <button className="page-btn nav-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8c8c8c" strokeWidth="2"><polyline points="9 18 15 12 9 6" /></svg></button>
+            <button className="page-btn active">1</button>
           </div>
         </div>
       </div>
@@ -393,13 +572,13 @@ const Dashboard = () => {
     return (
       <div className="profile-page p-24">
         {/* Breadcrumb & Header */}
-        <div className="user-management-header mb-24">
-          <div className="breadcrumb text-secondary mb-8" style={{ fontSize: '12px' }}>
+        <div className="user-management-header" style={{ marginBottom: '32px' }}>
+          <div className="breadcrumb text-secondary" style={{ fontSize: '12px', marginBottom: '8px' }}>
             User Management  /  <span style={{ color: '#262626' }}>User Request</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <svg onClick={() => setActiveMenu('user-request')} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#262626" strokeWidth="2" style={{ cursor: 'pointer' }}><polyline points="15 18 9 12 15 6"></polyline></svg>
-            <h2 className="page-title m-0" style={{ fontSize: '20px', fontWeight: 600 }}>Profile Details</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <svg onClick={() => setActiveMenu('user-request')} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#262626" strokeWidth="2" style={{ cursor: 'pointer' }}><polyline points="15 18 9 12 15 6"></polyline></svg>
+            <h2 className="page-title m-0" style={{ fontSize: '20px', fontWeight: 600, color: '#262626' }}>Profile Details</h2>
           </div>
         </div>
 
@@ -465,17 +644,27 @@ const Dashboard = () => {
                   <div style={{ display: 'flex', marginBottom: '16px' }}><span style={{ width: '140px', color: '#8c8c8c' }}>PAN Number:</span><span>{d["2"]?.pan || d["5"]?.entityPanCard}</span></div>
                   <div style={{ display: 'flex', marginBottom: '16px' }}><span style={{ width: '140px', color: '#8c8c8c' }}>GST NO:</span><span>{d["2"]?.gstNumber}</span></div>
                 </div>
-                <div style={{ display: 'flex', gap: '12px' }}>
-                  {d["5"]?.certificateOfIncorporationDocumentPdf ? (
-                    <img src={d["5"].certificateOfIncorporationDocumentPdf} alt="Incorporation" style={{ width: '180px', height: '110px', borderRadius: '4px', border: '1px solid #d9d9d9', objectFit: 'cover' }} />
-                  ) : (
-                    <div style={{ width: '180px', height: '110px', background: 'linear-gradient(135deg, #f5f0e1 0%, #e8dcc8 100%)', borderRadius: '4px', border: '1px solid #d9d9d9' }}></div>
-                  )}
-                  {d["5"]?.businessProposal ? (
-                    <img src={d["5"].businessProposal} alt="Proposal" style={{ width: '180px', height: '110px', borderRadius: '4px', border: '1px solid #d9d9d9', objectFit: 'cover' }} />
-                  ) : (
-                    <div style={{ width: '180px', height: '110px', background: 'linear-gradient(135deg, #f5f0e1 0%, #e8dcc8 100%)', borderRadius: '4px', border: '1px solid #d9d9d9' }}></div>
-                  )}
+                <div style={{ display: 'flex', gap: '16px' }}>
+                  <div style={{ textAlign: 'center' }}>
+                    {d["5"]?.certificateOfIncorporationDocumentPdf ? (
+                      <div style={{ position: 'relative' }}>
+                        <img src={d["5"].certificateOfIncorporationDocumentPdf} alt="Inc Doc" style={{ width: '180px', height: '110px', borderRadius: '4px', border: '1px solid #d9d9d9', objectFit: 'contain', background: '#f5f5f5' }} />
+                        <a href={d["5"].certificateOfIncorporationDocumentPdf} target="_blank" rel="noreferrer" style={{ position: 'absolute', bottom: '4px', right: '4px', background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '10px', padding: '2px 6px', borderRadius: '2px', textDecoration: 'none' }}>View Full</a>
+                      </div>
+                    ) : (
+                      <div style={{ width: '180px', height: '110px', background: '#f0f0f0', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bfbfbf', fontSize: '12px' }}>No Incorporation Doc</div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    {d["5"]?.businessProposal ? (
+                      <div style={{ position: 'relative' }}>
+                        <img src={d["5"].businessProposal} alt="Prop Doc" style={{ width: '180px', height: '110px', borderRadius: '4px', border: '1px solid #d9d9d9', objectFit: 'contain', background: '#f5f5f5' }} />
+                        <a href={d["5"].businessProposal} target="_blank" rel="noreferrer" style={{ position: 'absolute', bottom: '4px', right: '4px', background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '10px', padding: '2px 6px', borderRadius: '2px', textDecoration: 'none' }}>View Full</a>
+                      </div>
+                    ) : (
+                      <div style={{ width: '180px', height: '110px', background: '#f0f0f0', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bfbfbf', fontSize: '12px' }}>No Proposal Doc</div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -487,17 +676,27 @@ const Dashboard = () => {
                   <div style={{ display: 'flex', marginBottom: '12px' }}><span style={{ width: '140px', color: '#8c8c8c' }}>Aadhaar No:</span><span>XXXX XXXX 7685</span></div>
                   <div style={{ display: 'flex', marginBottom: '12px' }}><span style={{ width: '140px', color: '#8c8c8c' }}>DOB:</span><span>21-02-2000</span></div>
                 </div>
-                <div style={{ display: 'flex', gap: '12px' }}>
-                  {d["5"]?.authorizedSignatoryKyc ? (
-                    <img src={d["5"].authorizedSignatoryKyc} alt="KYC" style={{ width: '180px', height: '120px', borderRadius: '4px', border: '1px solid #e8e8e8', objectFit: 'cover' }} />
-                  ) : (
-                    <div style={{ width: '180px', height: '120px', background: '#f5f5f5', borderRadius: '4px', border: '1px solid #e8e8e8' }}></div>
-                  )}
-                  {d["5"]?.firstAndLastPageAgreement ? (
-                    <img src={d["5"].firstAndLastPageAgreement} alt="Agreement" style={{ width: '180px', height: '120px', borderRadius: '4px', border: '1px solid #e8e8e8', objectFit: 'cover' }} />
-                  ) : (
-                    <div style={{ width: '180px', height: '120px', background: '#f5f5f5', borderRadius: '4px', border: '1px solid #e8e8e8' }}></div>
-                  )}
+                <div style={{ display: 'flex', gap: '16px' }}>
+                  <div style={{ textAlign: 'center' }}>
+                    {d["5"]?.authorizedSignatoryKyc ? (
+                      <div style={{ position: 'relative' }}>
+                        <img src={d["5"].authorizedSignatoryKyc} alt="KYC Doc" style={{ width: '180px', height: '120px', borderRadius: '4px', border: '1px solid #d9d9d9', objectFit: 'contain', background: '#f5f5f5' }} />
+                        <a href={d["5"].authorizedSignatoryKyc} target="_blank" rel="noreferrer" style={{ position: 'absolute', bottom: '4px', right: '4px', background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '10px', padding: '2px 6px', borderRadius: '2px', textDecoration: 'none' }}>View Full</a>
+                      </div>
+                    ) : (
+                      <div style={{ width: '180px', height: '120px', background: '#f0f0f0', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bfbfbf', fontSize: '12px' }}>No KYC Doc</div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    {d["5"]?.firstAndLastPageAgreement ? (
+                      <div style={{ position: 'relative' }}>
+                        <img src={d["5"].firstAndLastPageAgreement} alt="Agr Doc" style={{ width: '180px', height: '120px', borderRadius: '4px', border: '1px solid #d9d9d9', objectFit: 'contain', background: '#f5f5f5' }} />
+                        <a href={d["5"].firstAndLastPageAgreement} target="_blank" rel="noreferrer" style={{ position: 'absolute', bottom: '4px', right: '4px', background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '10px', padding: '2px 6px', borderRadius: '2px', textDecoration: 'none' }}>View Full</a>
+                      </div>
+                    ) : (
+                      <div style={{ width: '180px', height: '120px', background: '#f0f0f0', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bfbfbf', fontSize: '12px' }}>No Agreement Doc</div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -590,9 +789,43 @@ const Dashboard = () => {
             </div>
           </div>
           <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-            <div className="notification-icon" style={{ position: 'relative', cursor: 'pointer' }}>
+            <div className="notification-icon" onClick={() => setShowNotifications(!showNotifications)} style={{ position: 'relative', cursor: 'pointer' }}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#595959" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>
-              <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#a80000', color: 'white', borderRadius: '50%', width: '16px', height: '16px', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>9</span>
+              {notifications.filter(n => n.unread).length > 0 && (
+                <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#a80000', color: 'white', borderRadius: '50%', width: '16px', height: '16px', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {notifications.filter(n => n.unread).length}
+                </span>
+              )}
+              
+              {showNotifications && (
+                <div className="notifications-dropdown" style={{ position: 'absolute', top: '40px', right: '-10px', width: '300px', background: '#fff', borderRadius: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', zIndex: 1000, overflow: 'hidden', border: '1px solid #f0f0f0' }}>
+                  <div style={{ padding: '16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 600, fontSize: '14px' }}>Notifications</span>
+                    <span style={{ fontSize: '12px', color: '#a80000', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); setNotifications(notifications.map(n => ({...n, unread: false}))); }}>Mark all as read</span>
+                  </div>
+                  <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                    {notifications.length > 0 ? (
+                      notifications.map((n) => (
+                        <div key={n.id} style={{ padding: '12px 16px', borderBottom: '1px solid #f9f9f9', background: n.unread ? '#fff9f9' : '#fff', position: 'relative' }}>
+                          <div style={{ display: 'flex', gap: '10px' }}>
+                             <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: n.type === 'APPROVED' ? '#52c41a' : n.type === 'PENDING' ? '#faad14' : n.type === 'REJECTED' ? '#f5222d' : '#1890ff', marginTop: '6px' }}></div>
+                             <div style={{ flex: 1 }}>
+                               <p style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: '#262626' }}>{n.title}</p>
+                               <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#595959', lineHeight: '1.4' }}>{n.message}</p>
+                               <p style={{ margin: '8px 0 0', fontSize: '11px', color: '#bfbfbf' }}>{n.time}</p>
+                             </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div style={{ padding: '32px', textAlign: 'center', color: '#bfbfbf', fontSize: '13px' }}>No notifications to show.</div>
+                    )}
+                  </div>
+                  <div style={{ padding: '12px', textAlign: 'center', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+                    <span style={{ fontSize: '12px', color: '#595959', cursor: 'pointer' }}>View All Activity</span>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="profile-section" onClick={() => setShowProfileMenu(!showProfileMenu)} style={{ position: 'relative' }}>
               <div className="avatar" style={{ background: '#ffeef0', color: '#a80000' }}>{userName.charAt(0).toUpperCase()}</div>

@@ -1,0 +1,20 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="X-UA-Compatible" content="ie=edge"><link rel="icon" type="image/x-icon" href="https://bankpratinidhiuat.nsdlbank.co.in/pictures/assets/nsdl_icon_logo.png"><title>NSDL</title><script src="https://cdn.jsdelivr.net/npm/regenerator-runtime@0.13.7/runtime.min.js"></script><meta http-equiv="Content-Security-Policy" content="default-src 'self' https: localhost:*; script-src 'unsafe-inline' 'unsafe-eval' https: localhost:*; connect-src https: localhost:* ws://localhost:*; style-src 'unsafe-inline' https:; object-src 'none';"><meta name="importmap-type" content="systemjs-importmap"/><script type="systemjs-importmap">{
+        "imports": {
+          "single-spa": "https://cdn.jsdelivr.net/npm/single-spa@5.9.0/lib/system/single-spa.min.js",
+          "@nsdl/utility":"https://nsdl-utility.web.app/nsdl-utility.js"
+        }
+      }</script><link rel="preload" href="https://cdn.jsdelivr.net/npm/single-spa@5.9.0/lib/system/single-spa.min.js" as="script"><script type="systemjs-importmap">{
+        "imports": {
+          "@single-spa/welcome": "https://unpkg.com/single-spa-welcome/dist/single-spa-welcome.js",
+          "@nsdl/root-config": "https://bankpratinidhi.nsdlbank.co.in/nsdl-root-config.js",
+          "@nsdl/root-config": "https://nsdl-web-stage.web.app/nsdl-root-config.js",
+          "login": "https://login-nsdl.web.app/main.js",
+          "left-nav": "https://nsdl-leftnav.web.app/main.js",
+          "top-nav": "https://nsdl-topnav.web.app/main.js",
+          "dashboard": "https://nsdl-dashboard.web.app/main.js",
+          "user-management": "https://nsdl-usermanagement.web.app/main.js",
+          "report": "https://nsdl-reports.web.app/main.js",
+          "wallet-adjustment": "https://nsdl-admin-wallet-adjustment.web.app/main.js",
+          "commission":"https://nsdl-admin-commission.web.app/main.js"
+        }
+      }</script><script src="https://cdn.jsdelivr.net/npm/zone.js@0.11.3/dist/zone.min.js"></script><script src="https://cdn.jsdelivr.net/npm/import-map-overrides@2.2.0/dist/import-map-overrides.js"></script><script src="https://cdn.jsdelivr.net/npm/systemjs@6.8.3/dist/system.min.js"></script><script src="https://cdn.jsdelivr.net/npm/systemjs@6.8.3/dist/extras/amd.min.js"></script></head><body><noscript>You need to enable JavaScript to run this app.</noscript><script>System.import('@nsdl/root-config');</script><import-map-overrides-full show-when-local-storage="devtools" dev-libs></import-map-overrides-full></body></html>

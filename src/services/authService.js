@@ -7,42 +7,39 @@ const LOGIN_URL = `${BASE_URL}/user-authorization/user/login`;
 // Basic auth token: nsdlab-internal-client:nsdlab-internal-password
 const BASIC_AUTH_TOKEN = 'bnNkbGFiLWludGVybmFsLWNsaWVudDpuc2RsYWItaW50ZXJuYWwtcGFzc3dvcmQ=';
 
+const api = axios.create();
+
 // Configure Axios interceptor to aggressively defend against expired/invalid tokens globally
-axios.interceptors.response.use(
+api.interceptors.response.use(
   (response) => {
-    // Trap deeply nested soft-rejection payloads (where the server returns HTTP 200 OK but internally flags the token as expired)
+    // Trap deeply nested soft-rejection payloads (e.g., 200 OK but body says 401)
     const respData = response.data;
+    if (respData && (respData.status_code === '401' || respData.status_code === 401 || (typeof respData.message === 'string' && respData.message.includes('Unauthorized')))) {
+      handleUnauthorized();
+      return Promise.reject(new Error("Unauthorized soft-rejection"));
+    }
     if (respData && respData.error && typeof respData.error.message === 'string' && respData.error.message.includes('Token is expired')) {
-      console.error("🔒 SECURITY BREACH / EXPIRED TOKEN DETECTED via JSON Payload: Forcing termination protocol to /login");
-      sessionStorage.clear();
-      localStorage.clear();
-      window.location.href = '/login';
+      handleUnauthorized();
       return Promise.reject(new Error("Token is expired"));
     }
-    
-    // Pass strictly valid responses through seamlessly
     return response;
   },
   (error) => {
-    // Trigger security protocol if '401 Unauthorized', '403 Forbidden', or an explicit error payload is intercepted
-    const errData = error.response?.data;
-    const hasExpiredPayload = errData && errData.error && typeof errData.error.message === 'string' && errData.error.message.includes('Token is expired');
-    const hasAuthStatus = error.response && (error.response.status === 401 || error.response.status === 403);
-
-    if (hasAuthStatus || hasExpiredPayload) {
-      console.error("🔒 SECURITY BREACH / EXPIRED TOKEN DETECTED: Forcing termination protocol to /login");
-      
-      // Destroy all local cryptographic variables, keys and tokens
-      sessionStorage.clear();
-      localStorage.clear();
-      
-      // Hard route directly back to the login wall bypassing React Router bounds
-      window.location.href = '/login';
+    // Trigger security protocol if '401 Unauthorized' or '403 Forbidden' HTTP status code
+    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+      handleUnauthorized();
     }
-    
     return Promise.reject(error);
   }
 );
+
+function handleUnauthorized() {
+  console.error("🔒 SECURITY BREACH / EXPIRED TOKEN: Clearing session and forcing exit.");
+  sessionStorage.clear();
+  localStorage.clear();
+  // Clear any persistent state and force redirect to login
+  window.location.replace(window.location.origin);
+}
 
 /**
  * Get base64-encoded geolocation string for the Geo-Location header.
@@ -88,7 +85,7 @@ export async function loginUser(username, password) {
   const encryptedPayload = encryptPayload(payload);
   const geoLocation = await getGeoLocation();
 
-  const response = await axios.post(
+  const response = await api.post(
     LOGIN_URL,
     { RequestData: encryptedPayload },
     {
@@ -101,7 +98,6 @@ export async function loginUser(username, password) {
   );
 
   if (response.data && response.data.ResponseData) {
-    // Reverting to local decryption to avoid 522 errors from remote service
     return decryptResponse(response.data.ResponseData);
   }
 
@@ -116,10 +112,11 @@ export async function loginUser(username, password) {
 export async function getUserDashboard(token) {
   const DASHBOARD_URL = `${BASE_URL}/user-mgmt/user/dashboard`;
 
-  const response = await axios.get(DASHBOARD_URL, {
+  const response = await api.get(DASHBOARD_URL, {
     headers: {
       'Authorization': token,
-      'Content-Type': 'application/json'
+      'key': 'a6T8tOCYiSzDTrcqPvCbJfy0wSQOVcfaevH0gtwCtoU=',
+      'pass_key': 'QC62FQKXT2DQTO43LMWH5A44UKVPQ7LK5Y6HVHRQ3XTIKLDTB6HA'
     }
   });
 
@@ -141,7 +138,7 @@ export async function getAuditTrail(token, params = {}) {
 
   const encryptedPayload = encryptPayload(params);
 
-  const response = await axios.post(
+  const response = await api.post(
     AUDIT_URL,
     { RequestData: encryptedPayload },
     {
@@ -166,7 +163,7 @@ export async function getUserListReport(token, params = {}) {
 
   const encryptedPayload = encryptPayload(params);
 
-  const response = await axios.post(
+  const response = await api.post(
     URL,
     { RequestData: encryptedPayload },
     {

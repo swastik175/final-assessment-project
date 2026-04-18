@@ -8,5 +8,14 @@ export default defineConfig({
     react(),
     babel({ presets: [reactCompilerPreset()] })
   ],
-  server: {},
+  server: {
+    proxy: {
+      '/api': {
+        target: 'https://services-encr.iserveu.online',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+        secure: false
+      }
+    }
+  },
 })

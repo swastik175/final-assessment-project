@@ -31,9 +31,15 @@ const Dashboard = () => {
   const [filters, setFilters] = useState({ fromDate: '', toDate: '', username: '', userType: 'ALL', status: 'ALL' });
 
   // UI State for Pagination & Selection
-  const [selectedRows, setSelectedRows] = useState([2]);
-  const [currentPage, setCurrentPage] = useState(6);
-  const [rowsPerPage, setRowsPerPage] = useState(3);
+  const [selectedRows, setSelectedRows] = useState([]);
+  
+  // User Request Pagination
+  const [requestPage, setRequestPage] = useState(1);
+  const [requestRowsPerPage, setRequestRowsPerPage] = useState(10);
+
+  // User List Report Pagination
+  const [listReportPage, setListReportPage] = useState(1);
+  const [listReportRowsPerPage, setListReportRowsPerPage] = useState(10);
 
   // Audit Trail Specific State
   const [auditSearchVal, setAuditSearchVal] = useState('');
@@ -121,6 +127,17 @@ const Dashboard = () => {
       loadAuditLogs();
     }
   }, [activeMenu, filters.fromDate, filters.toDate]);
+
+  useEffect(() => {
+    const handleGlobalClick = () => {
+      setShowProfileMenu(false);
+      setShowNotifications(false);
+      setShowUserTypeDropdown(false);
+      setShowStatusDropdown(false);
+    };
+    document.addEventListener('click', handleGlobalClick);
+    return () => document.removeEventListener('click', handleGlobalClick);
+  }, []);
 
   const loadAuditLogs = async () => {
     setIsLoadingAudit(true);
@@ -313,9 +330,86 @@ const Dashboard = () => {
   const [reqEndDate, setReqEndDate] = useState('');
   const [requestSelectedStatus, setRequestSelectedStatus] = useState('ALL');
 
+  // User List Report State (Clone of User Request as requested)
+  const [listReportSearchVal, setListReportSearchVal] = useState('');
+  const [listReportSelectedRole, setListReportSelectedRole] = useState('ALL');
+  const [listReportTableData, setListReportTableData] = useState([]);
+  const [isListReportLoading, setIsListReportLoading] = useState(false);
+  const [hasSearchedListReport, setHasSearchedListReport] = useState(false);
+  const [listReportStartDate, setListReportStartDate] = useState('');
+  const [listReportEndDate, setListReportEndDate] = useState('');
+  const [listReportSelectedStatus, setListReportSelectedStatus] = useState('ALL');
+  const [listReportSearchMode, setListReportSearchMode] = useState('date');
+
+  const handleUserListReportSearch = async () => {
+    setIsListReportLoading(true);
+    setHasSearchedListReport(true);
+    setListReportPage(1); // Reset to page 1 on new search
+    const token = sessionStorage.getItem('access_token');
+    
+    // Get logged in userName from decrypted login metadata
+    const loginData = JSON.parse(sessionStorage.getItem('user_data') || '{}');
+    const loggedInUserName = loginData?.userName || loginData?.userInfo?.userName || 'gourab_ops_checker';
+
+    const roleMapping = {
+      'Bank User': 'CBC Maker',
+      'CBC': 'CBC',
+      'CBC Maker': 'CBC Maker',
+      'MDS': 'Master Distributor',
+      'DS': 'Distributor',
+      'Agent': 'Retailer',
+      'ALL': 'ALL'
+    };
+
+    const currentRole = roleMapping[listReportSelectedRole] || 'ALL';
+
+    try {
+      setListReportTableData([]); 
+      let data;
+
+      if (listReportSearchMode === 'date') {
+        const params = {
+          startDate: listReportStartDate,
+          endDate: listReportEndDate,
+          status: listReportSelectedStatus,
+          role: currentRole,
+          username: loggedInUserName
+        };
+        data = await getUserListByDateRange(token, params);
+      } else {
+        const payload = {
+          username: listReportSearchVal,
+          userRole: currentRole
+        };
+        data = await getUserListReport(token, payload);
+      }
+
+      let finalData = [];
+      if (data?.resultObj?.result) {
+        finalData = Array.isArray(data.resultObj.result) ? data.resultObj.result : [data.resultObj.result];
+      } else if (data?.resultObj?.data) {
+        finalData = Array.isArray(data.resultObj.data) ? data.resultObj.data : [data.resultObj.data];
+      } else if (Array.isArray(data)) {
+        finalData = data;
+      }
+      setListReportTableData(finalData);
+    } catch (error) {
+      console.error('List Report Search API failed:', error);
+      const status = error.response?.status;
+      if (status === 401 || status === 403 || error.message?.includes('401')) {
+        sessionStorage.clear();
+        localStorage.clear();
+        window.location.replace(window.location.origin);
+      }
+    } finally {
+      setIsListReportLoading(false);
+    }
+  };
+
   const handleUserRequestSearch = async () => {
     setIsRequestLoading(true);
     setHasSearched(true);
+    setRequestPage(1); // Reset to page 1 on new search
     const token = sessionStorage.getItem('access_token');
     
     // Get logged in userName from decrypted login metadata
@@ -445,7 +539,7 @@ const Dashboard = () => {
           )}
 
           {/* User Type Dropdown */}
-          <div style={{ position: 'relative' }}>
+          <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
             <button
               onClick={() => setShowUserTypeDropdown(!showUserTypeDropdown)}
               style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '38px', minWidth: '140px' }}
@@ -464,7 +558,7 @@ const Dashboard = () => {
           </div>
 
           {/* Status Dropdown */}
-          <div style={{ position: 'relative' }}>
+          <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
             <button
               onClick={() => setShowStatusDropdown(!showStatusDropdown)}
               style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '38px', minWidth: '120px' }}
@@ -513,7 +607,7 @@ const Dashboard = () => {
                 {isRequestLoading ? (
                   <tr><td colSpan="10" style={{ textAlign: 'center', padding: '40px' }}>Loading dynamic data...</td></tr>
                 ) : requestTableData.length > 0 ? (
-                  requestTableData.map((row, idx) => (
+                  requestTableData.slice((requestPage - 1) * requestRowsPerPage, requestPage * requestRowsPerPage).map((row, idx) => (
                     <tr key={idx} style={{ height: '56px' }}>
                       <td style={{ textAlign: 'center' }}><div className="checkbox-cell"><input type="checkbox" style={{ accentColor: '#a80000' }} /></div></td>
                       <td>{row["1"]?.firstName || '---'}</td>
@@ -568,6 +662,7 @@ const Dashboard = () => {
   const renderProfile = () => {
     const profileTabs = ['Basic Details', 'PAN Details', 'Aadhar Details', 'Matching Details', 'Geo-Tagging  Analysis', 'Browser Data'];
     const d = selectedUserData || {};
+    const isPending = d.status === 'PENDING';
 
     return (
       <div className="profile-page p-24">
@@ -744,8 +839,230 @@ const Dashboard = () => {
 
           {/* Action Footer */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', borderTop: '1px solid #f0f0f0', paddingTop: '16px' }}>
-            <button style={{ background: 'transparent', border: 'none', color: '#a51010', fontWeight: 500, cursor: 'pointer' }}>Reject</button>
-            <button style={{ background: '#52c41a', border: 'none', color: '#fff', padding: '8px 24px', borderRadius: '4px', fontWeight: 500, cursor: 'pointer' }}>Approve</button>
+            <button 
+              disabled={!isPending}
+              style={{ 
+                background: 'transparent', 
+                border: 'none', 
+                color: isPending ? '#a51010' : '#8c8c8c', 
+                fontWeight: 500, 
+                cursor: isPending ? 'pointer' : 'not-allowed',
+                opacity: isPending ? 1 : 0.6
+              }}
+            >
+              Reject
+            </button>
+            <button 
+              disabled={!isPending}
+              style={{ 
+                background: isPending ? '#52c41a' : '#f5f5f5', 
+                border: isPending ? 'none' : '1px solid #d9d9d9', 
+                color: isPending ? '#fff' : '#bfbfbf', 
+                padding: '8px 24px', 
+                borderRadius: '4px', 
+                fontWeight: 500, 
+                cursor: isPending ? 'pointer' : 'not-allowed',
+                filter: isPending ? 'none' : 'grayscale(1)'
+              }}
+            >
+              Approve
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderUserListReport = () => {
+    const userTypes = ['Bank User', 'CBC', 'CBC Maker', 'MDS', 'DS', 'Agent'];
+    const statuses = ['ALL', 'APPROVED', 'PENDING', 'REJECTED'];
+
+    return (
+      <div className="audit-trail-view p-24">
+        <div className="user-management-header" style={{ marginBottom: '24px' }}>
+          <div className="breadcrumb text-secondary" style={{ fontSize: '12px', marginBottom: '8px' }}>User Management  /  <span style={{ color: '#262626' }}>User list report</span></div>
+          <h2 className="page-title m-0" style={{ fontSize: '20px', fontWeight: 600, color: '#262626' }}>User list report</h2>
+        </div>
+
+        {/* Radio Selection */}
+        <div className="search-radio-group mb-24" style={{ display: 'flex', gap: '24px' }}>
+          <label className="radio-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px' }}>
+            <input
+              type="radio"
+              name="list_report_search_mode"
+              checked={listReportSearchMode === 'date'}
+              onChange={() => setListReportSearchMode('date')}
+              style={{ accentColor: '#a80000', cursor: 'pointer', width: '16px', height: '16px', margin: 0 }}
+            />
+            Search by Date Range
+          </label>
+          <label className="radio-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px' }}>
+            <input
+              type="radio"
+              name="list_report_search_mode"
+              checked={listReportSearchMode === 'username'}
+              onChange={() => setListReportSearchMode('username')}
+              style={{ accentColor: '#a80000', cursor: 'pointer', width: '16px', height: '16px', margin: 0 }}
+            />
+            Search by User Name
+          </label>
+        </div>
+
+        {/* Action Bar */}
+        <div className="audit-top-bar mb-24" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {listReportSearchMode === 'date' ? (
+            <div className="date-range-wrapper date-range-picker" style={{ display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', padding: '8px 12px', height: '38px' }}>
+              <input 
+                type="date" 
+                value={listReportStartDate}
+                onChange={(e) => setListReportStartDate(e.target.value)}
+                onClick={(e) => e.target.showPicker && e.target.showPicker()}
+                style={{ border: 'none', outline: 'none', width: '140px', color: '#595959', fontSize: '13px', cursor: 'pointer' }} 
+              />
+              <span style={{ color: '#bfbfbf', margin: '0 8px' }}>→</span>
+              <input 
+                type="date" 
+                value={listReportEndDate}
+                onChange={(e) => setListReportEndDate(e.target.value)}
+                onClick={(e) => e.target.showPicker && e.target.showPicker()}
+                style={{ border: 'none', outline: 'none', width: '140px', color: '#595959', fontSize: '13px', cursor: 'pointer' }} 
+              />
+            </div>
+          ) : (
+            <div className="search-input-wrapper dynamic-search" style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', display: 'flex', alignItems: 'center', padding: '8px 12px', height: '38px' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#bfbfbf" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+              <input
+                type="text"
+                placeholder="Search User Name"
+                value={listReportSearchVal}
+                onChange={(e) => setListReportSearchVal(e.target.value)}
+                style={{ width: '180px', border: 'none', outline: 'none', marginLeft: '8px', fontSize: '14px' }}
+              />
+            </div>
+          )}
+
+          {/* User Type Dropdown */}
+          <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setShowUserTypeDropdown(!showUserTypeDropdown)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '38px', minWidth: '140px' }}
+            >
+              {listReportSelectedRole === 'ALL' ? 'ALL' : listReportSelectedRole}
+              <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="#8c8c8c" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </button>
+            {showUserTypeDropdown && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 10, width: '160px', marginTop: '4px' }}>
+                <div onClick={() => { setListReportSelectedRole('ALL'); setShowUserTypeDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: '1px solid #f5f5f5', color: listReportSelectedRole === 'ALL' ? '#A51010' : '#262626', fontWeight: listReportSelectedRole === 'ALL' ? '600' : '400' }}>ALL Types</div>
+                {userTypes.map((type, i) => (
+                  <div key={i} onClick={() => { setListReportSelectedRole(type); setShowUserTypeDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: i < userTypes.length - 1 ? '1px solid #f5f5f5' : 'none', color: listReportSelectedRole === type ? '#A51010' : '#262626', fontWeight: listReportSelectedRole === type ? '600' : '400' }}>{type}</div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Status Dropdown */}
+          <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setShowStatusDropdown(!showStatusDropdown)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '38px', minWidth: '120px' }}
+            >
+              {listReportSelectedStatus}
+              <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="#8c8c8c" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </button>
+            {showStatusDropdown && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 101, width: '140px', marginTop: '4px' }}>
+                {statuses.map((status, i) => (
+                  <div key={i} onClick={() => { setListReportSelectedStatus(status); setShowStatusDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: i < statuses.length - 1 ? '1px solid #f5f5f5' : 'none', color: listReportSelectedStatus === status ? '#A51010' : '#262626', fontWeight: listReportSelectedStatus === status ? '600' : '400' }}>{status}</div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Search Trigger */}
+          <button
+            onClick={handleUserListReportSearch}
+            disabled={isListReportLoading}
+            style={{ padding: '0 24px', height: '38px', background: '#a80000', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '14px' }}
+          >
+            {isListReportLoading ? '...' : 'Search'}
+          </button>
+        </div>
+
+        {/* Table */}
+        <div className="table-card">
+          <div className="nsdl-table-container">
+            <table className="nsdl-table nsdl-user-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '40px', textAlign: 'center' }}><div className="checkbox-cell"><input type="checkbox" /></div></th>
+                  <th>first Name <span className="sort-icons">↕</span></th>
+                  <th>Last Name <span className="sort-icons">↕</span></th>
+                  <th>User Name <span className="sort-icons">↕</span></th>
+                  <th>Mobile No. <span className="sort-icons">↕</span></th>
+                  <th>Email ID <span className="sort-icons">↕</span></th>
+                  <th>Role <span className="sort-icons">↕</span></th>
+                  <th>Date Created <span className="sort-icons">↕</span></th>
+                  <th>Status <span className="sort-icons">↕</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {isListReportLoading ? (
+                  <tr><td colSpan="9" style={{ textAlign: 'center', padding: '40px' }}>Loading dynamic data...</td></tr>
+                ) : listReportTableData.length > 0 ? (
+                  listReportTableData.slice((listReportPage - 1) * listReportRowsPerPage, listReportPage * listReportRowsPerPage).map((row, idx) => (
+                    <tr key={idx} style={{ height: '56px' }}>
+                      <td style={{ textAlign: 'center' }}><div className="checkbox-cell"><input type="checkbox" style={{ accentColor: '#a80000' }} /></div></td>
+                      <td>{row["1"]?.firstName || '---'}</td>
+                      <td>{row["1"]?.lastName || '---'}</td>
+                      <td>{row.username || '---'}</td>
+                      <td>{row["1"]?.mobileNumber || '---'}</td>
+                      <td>{row["1"]?.email || '---'}</td>
+                      <td>{row.userRole || '---'}</td>
+                      <td>{row.createdAt ? new Date(row.createdAt).toLocaleDateString('en-GB') : '---'}</td>
+                      <td>
+                        <span style={{ 
+                          color: row.status === 'REJECTED' ? '#f5222d' : row.status === 'PENDING' ? '#faad14' : '#52c41a', 
+                          background: row.status === 'REJECTED' ? '#fff1f0' : row.status === 'PENDING' ? '#fff7e6' : '#f6ffed', 
+                          padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 500 
+                        }}>
+                          {row.status || 'Active'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                ) : hasSearchedListReport ? (
+                  <tr><td colSpan="9" style={{ textAlign: 'center', padding: '40px', color: '#8c8c8c' }}>No matching records found.</td></tr>
+                ) : (
+                  <tr>
+                    <td colSpan="9" style={{ textAlign: 'center', padding: '60px', color: '#bfbfbf' }}>
+                      <div style={{ fontSize: '14px' }}>Please perform a search to view user list reports.</div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="pagination-bar" style={{ marginTop: '24px' }}>
+          <div className="pagination-left">
+            <span className="page-text">Row per page</span>
+            <select className="page-select" value={listReportRowsPerPage} onChange={(e) => { setListReportRowsPerPage(Number(e.target.value)); setListReportPage(1); }}>
+              <option value="5">5</option>
+              <option value="10">10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+            </select>
+            <span style={{ marginLeft: '16px', fontSize: '13px', color: '#8c8c8c' }}>
+              Showing {(listReportPage - 1) * listReportRowsPerPage + 1} - {Math.min(listReportPage * listReportRowsPerPage, listReportTableData.length)} of {listReportTableData.length}
+            </span>
+          </div>
+          <div className="pagination-right">
+             <button disabled={listReportPage === 1} onClick={() => setListReportPage(p => p - 1)} className="page-btn nav-btn">{"<"}</button>
+             {Array.from({ length: Math.ceil(listReportTableData.length / listReportRowsPerPage) }, (_, i) => i + 1).map(p => (
+               <button key={p} onClick={() => setListReportPage(p)} className={`page-btn ${listReportPage === p ? 'active' : ''}`}>{p}</button>
+             ))}
+             <button disabled={listReportPage === Math.ceil(listReportTableData.length / listReportRowsPerPage)} onClick={() => setListReportPage(p => p + 1)} className="page-btn nav-btn">{">"}</button>
           </div>
         </div>
       </div>
@@ -789,7 +1106,7 @@ const Dashboard = () => {
             </div>
           </div>
           <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-            <div className="notification-icon" onClick={() => setShowNotifications(!showNotifications)} style={{ position: 'relative', cursor: 'pointer' }}>
+            <div className="notification-icon" onClick={(e) => { e.stopPropagation(); setShowNotifications(!showNotifications); }} style={{ position: 'relative', cursor: 'pointer' }}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#595959" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></svg>
               {notifications.filter(n => n.unread).length > 0 && (
                 <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#a80000', color: 'white', borderRadius: '50%', width: '16px', height: '16px', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -827,7 +1144,7 @@ const Dashboard = () => {
                 </div>
               )}
             </div>
-            <div className="profile-section" onClick={() => setShowProfileMenu(!showProfileMenu)} style={{ position: 'relative' }}>
+            <div className="profile-section" onClick={(e) => { e.stopPropagation(); setShowProfileMenu(!showProfileMenu); }} style={{ position: 'relative' }}>
               <div className="avatar" style={{ background: '#ffeef0', color: '#a80000' }}>{userName.charAt(0).toUpperCase()}</div>
               <span className="user-name" style={{ fontWeight: 500 }}>{userName}</span>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#595959" strokeWidth="2" style={{ marginLeft: '4px' }}><polyline points="6 9 12 15 18 9"></polyline></svg>
@@ -843,9 +1160,9 @@ const Dashboard = () => {
 
         <main className="content">
           {activeMenu === 'dashboard' && renderDashboard()}
-          {activeMenu === 'user-list-report' && renderAuditTrail()}
+          {activeMenu === 'user-list-report' && renderUserListReport()}
           {activeMenu === 'user-request' && renderUserRequest()}
-          {activeMenu === 'audit-trail' && renderAuditTrail()} {/* Reusing for demo */}
+          {activeMenu === 'audit-trail' && renderAuditTrail()} 
           {activeMenu === 'profile' && renderProfile()}
         </main>
       </div>

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './Dashboard.css';
-import { getUserDashboard, getAuditTrail, getUserListReport, getUserListByDateRange } from '../services/authService';
+import { getUserDashboard, getAuditTrail, getUserListReport, getUserListByDateRange, logoutUser } from '../services/authService';
 import nsdlLogo from '../assets/nsdl_logo.png';
 
 const Dashboard = () => {
@@ -76,10 +76,8 @@ const Dashboard = () => {
     } catch (error) {
       console.error("Audit Search Failed:", error);
       // Redundant check for 401
-      if (error.response?.status === 401 || error.message?.includes('401')) {
-        sessionStorage.clear();
-        localStorage.clear();
-        window.location.replace(window.location.origin);
+      if (error.response?.status == 401 || error.message?.includes('401')) {
+        handleLogout();
       }
     } finally {
       setIsAuditTableLoading(false);
@@ -108,10 +106,8 @@ const Dashboard = () => {
       } catch (error) {
         console.error('Failed to fetch dashboard data:', error);
         // If the initial fetch is unauthorized, boot the user out immediately
-        if (error.response?.status === 401 || error.message?.includes('401')) {
-          sessionStorage.clear();
-          localStorage.clear();
-          window.location.replace(window.location.origin);
+        if (error.response?.status == 401 || error.message?.includes('401')) {
+          handleLogout();
           return;
         }
         const userData = JSON.parse(sessionStorage.getItem('user_data') || '{}');
@@ -120,6 +116,26 @@ const Dashboard = () => {
     };
 
     fetchData();
+  }, []);
+
+  useEffect(() => {
+    const loginTime = sessionStorage.getItem('login_timestamp');
+    if (!loginTime) return;
+
+    const timeoutDuration = 20 * 60 * 1000; // 20 minutes
+    const elapsed = Date.now() - parseInt(loginTime);
+    const remainingTime = timeoutDuration - elapsed;
+
+    if (remainingTime <= 0) {
+      handleLogout();
+    } else {
+      const timer = setTimeout(() => {
+        alert("Session Expired: You have been logged out for security purposes. Please login again.");
+        handleLogout();
+      }, remainingTime);
+      
+      return () => clearTimeout(timer);
+    }
   }, []);
 
   useEffect(() => {
@@ -163,14 +179,22 @@ const Dashboard = () => {
       setAuditData(parsedData);
     } catch (error) {
       console.error('Audit trail fetch failed:', error);
+      if (error.response?.status == 401 || error.message?.includes('401')) {
+        handleLogout();
+      }
     } finally {
       setIsLoadingAudit(false);
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const token = sessionStorage.getItem('access_token');
+    if (token) {
+      await logoutUser(token);
+    }
     sessionStorage.clear();
-    window.location.reload();
+    localStorage.clear();
+    window.location.replace(window.location.origin);
   };
 
   const renderDashboard = () => (
@@ -396,10 +420,8 @@ const Dashboard = () => {
     } catch (error) {
       console.error('List Report Search API failed:', error);
       const status = error.response?.status;
-      if (status === 401 || status === 403 || error.message?.includes('401')) {
-        sessionStorage.clear();
-        localStorage.clear();
-        window.location.replace(window.location.origin);
+      if (status == 401 || status == 403 || error.message?.includes('401')) {
+        handleLogout();
       }
     } finally {
       setIsListReportLoading(false);
@@ -461,9 +483,8 @@ const Dashboard = () => {
     } catch (error) {
       console.error('Search API failed:', error);
       const status = error.response?.status;
-      if (status === 401 || status === 403 || error.message?.includes('401')) {
-        sessionStorage.clear();
-        window.location.replace(window.location.origin);
+      if (status == 401 || status == 403 || error.message?.includes('401')) {
+        handleLogout();
       }
     } finally {
       setIsRequestLoading(false);
@@ -1173,8 +1194,8 @@ const Dashboard = () => {
             <h3 style={{ margin: '0 0 16px' }}>Confirm Logout</h3>
             <p style={{ color: '#8c8c8c', marginBottom: '32px' }}>Are you sure you want to logout?</p>
             <div style={{ display: 'flex', gap: '12px' }}>
-              <button onClick={() => setShowLogoutModal(false)} style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #d9d9d9' }}>Cancel</button>
-              <button onClick={handleLogout} style={{ flex: 1, padding: '10px', borderRadius: '6px', border: 'none', background: '#A51010', color: '#fff' }}>Okay</button>
+              <button onClick={() => setShowLogoutModal(false)} style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #d9d9d9', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={handleLogout} style={{ flex: 1, padding: '10px', borderRadius: '6px', border: 'none', background: '#A51010', color: '#fff', cursor: 'pointer' }}>Okay</button>
             </div>
           </div>
         </div>

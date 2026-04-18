@@ -13,32 +13,39 @@ const api = axios.create();
 // Configure Axios interceptor to aggressively defend against expired/invalid tokens globally
 api.interceptors.response.use(
   (response) => {
+    // If the server returns a 200 but the body contains unauthorized info
     const respData = response.data;
-    // Aggressively check for ANY sign of an unauthorized state in the response body
     if (respData) {
-      const isUnauthorized =
-        respData.status_code === '401' ||
-        respData.status_code === 401 ||
-        respData.status === 401 ||
-        respData.statusCode === 401 ||
+      const isUnauthInBody =
+        respData.status_code == 401 ||
+        respData.status == 401 ||
+        respData.statusCode == 401 ||
         (respData.message && typeof respData.message === 'string' &&
-          (respData.message.includes('Unauthorized') || respData.message.includes('Token is expired') || respData.message.includes('401'))) ||
-        respData.success === false && (respData.status_code === '401' || respData.status_code === 'UNAUTH0001');
+          (respData.message.includes('401') || respData.message.toLowerCase().includes('unauthorized') || respData.message.toLowerCase().includes('expired')));
 
-      if (isUnauthorized) {
+      if (isUnauthInBody) {
+        console.warn("⚠️ UNAUTHORIZED DETECTED IN RESPONSE BODY:", respData);
         handleUnauthorized();
-        return Promise.reject(new Error("Unauthorized detected in response body"));
+        return Promise.reject(new Error("Unauthorized response body"));
       }
     }
     return response;
   },
   (error) => {
-    // Standard HTTP Status Code handling
-    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+    console.group("❌ API ERROR INTERCEPTED");
+    console.error("URL:", error.config?.url);
+    console.error("Status:", error.response?.status);
+    console.error("Message:", error.message);
+    console.groupEnd();
+
+    // Standard HTTP Status Code handling (401 or 403)
+    const status = error.response?.status;
+    if (status == 401 || status == 403) {
       handleUnauthorized();
-    } else if (error.message && error.message.includes('401')) {
+    } else if (error.message && (error.message.includes('401') || error.message.includes('403'))) {
       handleUnauthorized();
     }
+
     return Promise.reject(error);
   }
 );
@@ -238,4 +245,23 @@ export async function getUserListReport(token, params = {}) {
   }
 
   return response.data;
+}
+
+/**
+ * Call the logout API
+ * @param {string} token - The access token
+ */
+export async function logoutUser(token) {
+  // Using the domain provided in the curl
+  const LOGOUT_URL = 'https://services.iserveu.online/dev/nsdlab-internal/user-authorization/logout';
+  try {
+    // Request is a POST with empty body as per curl
+    await api.post(LOGOUT_URL, {}, {
+      headers: {
+        'Authorization': token
+      }
+    });
+  } catch (error) {
+    console.error('Logout API failed:', error);
+  }
 }

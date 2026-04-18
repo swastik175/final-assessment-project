@@ -86,6 +86,7 @@ const LoginForm = ({ onLoginSuccess }) => {
       if (token) {
         sessionStorage.setItem('access_token', token);
         sessionStorage.setItem('user_data', JSON.stringify(response));
+        sessionStorage.setItem('login_timestamp', Date.now().toString());
         
         setModal({
           show: true,

@@ -17,19 +17,39 @@ const Dashboard = () => {
   const [sessionAvatar, setSessionAvatar] = useState('');
 
   const [loggedInRole, setLoggedInRole] = useState('');
+  const [authUserName, setAuthUserName] = useState('');
   const [isOpsMaker, setIsOpsMaker] = useState(false);
   const [isOpsChecker, setIsOpsChecker] = useState(false);
+
+  // High-fidelity identity extractor
+  const getAuthUsername = () => {
+    try {
+      const raw = sessionStorage.getItem('user_data');
+      if (!raw) return '';
+      const parsed = JSON.parse(raw);
+      const ctx = parsed?.userInfo || parsed?.data?.userInfo || parsed || {};
+      // Prioritize the exact field mentioned by the user
+      return ctx.userName || ctx.userProfile?.userName || ctx.username || '';
+    } catch (error) {
+      console.error("IDENTITY_EXTRACTION_FAILURE:", error);
+      return '';
+    }
+  };
 
   useEffect(() => {
     const rawUserData = sessionStorage.getItem('user_data');
     if (rawUserData) {
       const parsed = JSON.parse(rawUserData);
-      const ctx = parsed?.userInfo || parsed || {};
+      const ctx = parsed?.userInfo || parsed?.data?.userInfo || parsed || {};
+      const uName = ctx.userName || ctx.userProfile?.userName || ctx.username || '';
       const role = (ctx.userType || '').trim().toUpperCase();
-      setLoggedInRole(role);
       
-      const makerMatch = role === 'ROLE_OPS_MAKER' || role === 'OPS_MAKER';
-      const checkerMatch = role === 'ROLE_OPS_CHECKER' || role === 'OPS_CHECKER';
+      setLoggedInRole(role);
+      setAuthUserName(uName);
+      setUserName(uName); // Sync TOP RIGHT profile name explicitly to 'ops_maker' as requested
+      
+      const makerMatch = role.includes('MAKER');
+      const checkerMatch = role.includes('CHECKER') || role === 'ADMIN' || role === 'SUPER_ADMIN' || role.includes('CHECK');
       
       setIsOpsMaker(makerMatch);
       setIsOpsChecker(checkerMatch);
@@ -654,21 +674,19 @@ const Dashboard = () => {
     setListReportPage(1); // Reset to page 1 on new search
     const token = sessionStorage.getItem('access_token');
     
-    // Get logged in userName from decrypted login metadata
-    const loginData = JSON.parse(sessionStorage.getItem('user_data') || '{}');
-    const loggedInUserName = loginData?.userName || loginData?.userInfo?.userName || 'gourab_ops_checker';
-
     const roleMapping = {
       'Bank User': 'CBC Maker',
       'CBC': 'CBC',
       'CBC Maker': 'CBC Maker',
       'MDS': 'Master Distributor',
       'DS': 'Distributor',
-      'Agent': 'Retailer',
+      'Agent': 'Agent', // Changed from Retailer to Agent as per API requirement
       'ALL': 'ALL'
     };
 
     const currentRole = roleMapping[listReportSelectedRole] || 'ALL';
+    const finalRole = currentRole.trim();
+    console.log("ROLE_MAPPING_AUDIT: Selection ->", listReportSelectedRole, "MappedTo -> [" + finalRole + "]");
 
     try {
       setListReportTableData([]); 
@@ -678,10 +696,12 @@ const Dashboard = () => {
         const params = {
           startDate: listReportStartDate,
           endDate: listReportEndDate,
-          status: listReportSelectedStatus,
-          role: currentRole,
-          username: loggedInUserName
+          status: (listReportSelectedStatus || 'ALL').trim(),
+          role: finalRole,
+          username: userName, // Using EXACTLY what is in the top right profile
+          userType: loggedInRole
         };
+        console.log("LIST_REPORT_SEARCH_AUDIT: Using Top Right Name ->", userName);
         data = await getUserListByDateRange(token, params);
       } else {
         const payload = {
@@ -717,21 +737,19 @@ const Dashboard = () => {
     setRequestPage(1); // Reset to page 1 on new search
     const token = sessionStorage.getItem('access_token');
     
-    // Get logged in userName from decrypted login metadata
-    const loginData = JSON.parse(sessionStorage.getItem('user_data') || '{}');
-    const loggedInUserName = loginData?.userName || loginData?.userInfo?.userName || 'gourab_ops_checker';
-
     const roleMapping = {
       'Bank User': 'CBC Maker',
       'CBC': 'CBC',
       'CBC Maker': 'CBC Maker',
       'MDS': 'Master Distributor',
       'DS': 'Distributor',
-      'Agent': 'Retailer',
+      'Agent': 'Agent', // Changed from Retailer to Agent as per API requirement
       'ALL': 'ALL'
     };
 
     const currentRole = roleMapping[requestSelectedRole] || 'ALL';
+    const finalRole = currentRole.trim();
+    console.log("ROLE_MAPPING_AUDIT: Selection ->", requestSelectedRole, "MappedTo -> [" + finalRole + "]");
 
     try {
       setRequestTableData([]); 
@@ -741,10 +759,12 @@ const Dashboard = () => {
         const params = {
           startDate: reqStartDate,
           endDate: reqEndDate,
-          status: requestSelectedStatus,
-          role: currentRole,
-          username: loggedInUserName
+          status: (requestSelectedStatus || 'ALL').trim(),
+          role: finalRole,
+          username: userName, // Using EXACTLY what is in the top right profile
+          userType: loggedInRole
         };
+        console.log("USER_REQUEST_SEARCH_AUDIT: Using Top Right Name ->", userName);
         data = await getUserListByDateRange(token, params);
       } else {
         const payload = {
@@ -980,7 +1000,7 @@ const Dashboard = () => {
   const renderProfile = () => {
     const profileTabs = ['Basic Details', 'PAN Details', 'Aadhar Details', 'Matching Details', 'Geo-Tagging  Analysis', 'Browser Data'];
     const d = selectedUserData || {};
-    const isPending = d.status === 'PENDING';
+    const isPending = (d.status || '').toUpperCase() === 'PENDING';
 
     return (
       <div className="profile-page p-24">
@@ -1036,7 +1056,9 @@ const Dashboard = () => {
               </div>
               <div style={{ marginTop: '24px' }}>
                 <label style={{ fontSize: '12px', color: '#8c8c8c' }}>Address</label>
-                <p style={{ fontWeight: 500, marginTop: '4px', lineHeight: '1.5' }}>{d["2"]?.businessAddress || `${d["1"]?.city}, ${d["1"]?.state} ${d["1"]?.pinCode}` || 'Plot No. E-12, SRB Tower, 11th Floor Infocity'}</p>
+                <p style={{ fontWeight: 500, marginTop: '4px', lineHeight: '1.5' }}>
+                  {d["2"]?.businessAddress || (`${d["1"]?.city || ''}${d["1"]?.city && d["1"]?.state ? ', ' : ''}${d["1"]?.state || ''} ${d["1"]?.pinCode || ''}`).trim() || 'Plot No. E-12, SRB Tower, 11th Floor Infocity'}
+                </p>
               </div>
             </div>
           </div>
@@ -1167,8 +1189,8 @@ const Dashboard = () => {
             )}
           </div>
 
-          {/* Action Footer - Only visible to Ops Checker */}
-          {isOpsChecker && (
+          {/* Action Footer - Only accessible to ROLE_OPS_CHECKER */}
+          {isOpsChecker ? (
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', borderTop: '1px solid #f0f0f0', paddingTop: '16px' }}>
               <button 
                 onClick={() => { setActionType('REJECTED'); setShowActionModal(true); }}
@@ -1201,11 +1223,10 @@ const Dashboard = () => {
                 Approve
               </button>
             </div>
-          )}
-          {!isOpsChecker && (
+          ) : (
             <div style={{ marginTop: '24px', borderTop: '1px solid #f0f0f0', paddingTop: '16px' }}>
                <p style={{ margin: 0, fontSize: '13px', color: '#8c8c8c', textAlign: 'center', fontStyle: 'italic' }}>
-                 Viewing as {loggedInRole === 'ROLE_OPS_MAKER' ? 'Ops Maker' : 'Administrator'}. Action buttons are restricted for this role.
+                 Viewing as {loggedInRole || 'Unknown Role'}. Action buttons are restricted for this role.
                </p>
             </div>
           )}

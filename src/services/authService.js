@@ -131,19 +131,26 @@ export async function getUserDashboard(token) {
 
 /**
  * Fetch User List by Date Range and Status
- * Endpoint: https://apidev-sdk.iserveu.online/NSDL/user_onboarding_report/fetch-user-list
+ * Selective Base URL based on User Role:
+ * ROLE_OPS_CHECKER -> https://apidev-sdk.iserveu.online/NSDL/user_onboarding_report/fetch-user-list
+ * ROLE_OPS_MAKER   -> https://apidev.iserveu.online/NSDL/user_onboarding/fetch-user-list
  */
 export async function getUserListByDateRange(token, params = {}) {
-  const URL = "https://apidev-sdk.iserveu.online/NSDL/user_onboarding_report/fetch-user-list";
-  const { startDate, endDate, status, role, username } = params;
+  const { startDate, endDate, status, role, username, userType } = params;
+  
+  // Choice of URL depends on exact userType
+  const isChecker = (userType || '').toUpperCase().includes('CHECKER');
+  const URL = isChecker 
+    ? "https://apidev-sdk.iserveu.online/NSDL/user_onboarding_report/fetch-user-list"
+    : "https://apidev.iserveu.online/NSDL/user_onboarding/fetch-user-list";
 
-  // Exact request body format
+  // Payload for search
   const payload = {
-    status: status || 'ALL',
-    username: username, // Logged in userName
+    status: (status || 'ALL').trim(),
+    username: username, // Logged in userName from Top Right
     startDate: startDate,
     endDate: endDate,
-    role: role || 'ALL'
+    role: (role || 'ALL').trim()
   };
 
   const encryptedPayload = encryptPayload(payload);

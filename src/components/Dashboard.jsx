@@ -16,6 +16,27 @@ const Dashboard = () => {
   const [activeProfileTab, setActiveProfileTab] = useState('Basic Details');
   const [sessionAvatar, setSessionAvatar] = useState('');
 
+  const [loggedInRole, setLoggedInRole] = useState('');
+  const [isOpsMaker, setIsOpsMaker] = useState(false);
+  const [isOpsChecker, setIsOpsChecker] = useState(false);
+
+  useEffect(() => {
+    const rawUserData = sessionStorage.getItem('user_data');
+    if (rawUserData) {
+      const parsed = JSON.parse(rawUserData);
+      const ctx = parsed?.userInfo || parsed || {};
+      const role = (ctx.userType || '').trim().toUpperCase();
+      setLoggedInRole(role);
+      
+      const makerMatch = role === 'ROLE_OPS_MAKER' || role === 'OPS_MAKER';
+      const checkerMatch = role === 'ROLE_OPS_CHECKER' || role === 'OPS_CHECKER';
+      
+      setIsOpsMaker(makerMatch);
+      setIsOpsChecker(checkerMatch);
+      console.log("RBAC_SYNC: Processed Role ->", role, "Permissions ->", {isOpsMaker: makerMatch, isOpsChecker: checkerMatch});
+    }
+  }, []);
+
   // Profile Action Modal State
   const [showActionModal, setShowActionModal] = useState(false);
   const [actionType, setActionType] = useState(''); // APPROVED or REJECTED
@@ -61,6 +82,96 @@ const Dashboard = () => {
   const [auditTableData, setAuditTableData] = useState([]);
   const [isAuditTableLoading, setIsAuditTableLoading] = useState(false);
   const [hasSearchedAudit, setHasSearchedAudit] = useState(false);
+
+  // Create CBC User Form State
+  const [cbcFormStep, setCbcFormStep] = useState(1);
+  const [cbcFormData, setCbcFormData] = useState({
+    // Step 1
+    firstName: '', lastName: '', username: '', mobileNumber: '',
+    emailAddress: '', adminName: '', addressLine1: '', addressLine2: '',
+    city: '', pin: '',
+    // Step 2 Extended
+    cbcName: '', companyName: '', pan: '', panNumber: '', adminEmail: '',
+    businessAddressLine1: '', businessAddressLine2: '', country: 'India',
+    state: '', city2: '', accountNo: '', gstNumber: '', telephone: '',
+    affiliationFee: '', entityId: '', staffCount: '', agreementFrom: '',
+    agreementTo: '', entityPan: '',
+    incAddress1: '', incAddress2: '', incCountry: 'India', incState: '',
+    incCity: '', incPin: '', sameAsBusiness: false,
+    selectedProducts: []
+  });
+  const [cbcFormErrors, setCbcFormErrors] = useState({});
+
+  const validatePan = (val) => {
+    if (!val) return true; // Let required validation handle empty
+    const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+    return panRegex.test(val);
+  };
+
+  const handlePanBlur = (e) => {
+    const { name, value } = e.target;
+    if (['pan', 'panNumber', 'entityPan'].includes(name)) {
+       const isValid = validatePan(value);
+       setCbcFormErrors(prev => ({
+         ...prev,
+         [name]: isValid ? '' : 'PAN is not in correct format (Ex: XXXXX0000X)'
+       }));
+    }
+  };
+
+  const handleCbcInputChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    const val = type === 'checkbox' ? checked : value;
+    
+    // Immediate Pincode Lookup
+    if (name === 'pin' && value.length === 6) {
+       // ... (existing pin logic)
+       setCbcFormData(prev => ({ ...prev, [name]: value }));
+       
+       fetch('https://services-v2.iserveu.online/isu/pincode/getCityStateDistrictAndroid', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ pin: parseInt(value) })
+       })
+       .then(res => res.json())
+       .then(res => {
+         if (res.statusCode === 0 && res.data?.data) {
+           const d = res.data.data;
+           setCbcFormData(prev => ({
+             ...prev,
+             city: d.city,
+             city2: d.city,
+             state: d.state,
+             addressLine2: `${d.district}, ${d.state}`,
+             businessAddressLine2: `${d.district}, ${d.state}`
+           }));
+           console.log("PINCODE_IMMEDIATE: Auto-filled for PIN ->", value);
+         }
+       }).catch(err => console.error("PIN_API_ERROR:", err));
+       return;
+    }
+
+    // Immediate Uppercase for PAN fields
+    if (['pan', 'panNumber', 'entityPan'].includes(name)) {
+       const capitalized = value.toUpperCase();
+       setCbcFormData(prev => ({ ...prev, [name]: capitalized }));
+       return;
+    }
+
+    if (name === 'sameAsBusiness' && checked) {
+       setCbcFormData(prev => ({
+         ...prev,
+         sameAsBusiness: true,
+         incAddress1: prev.businessAddressLine1 || prev.addressLine1,
+         incAddress2: prev.businessAddressLine2 || prev.addressLine2,
+         incState: prev.state,
+         incCity: prev.city2 || prev.city,
+         incPin: prev.pin
+       }));
+    } else {
+       setCbcFormData(prev => ({ ...prev, [name]: val }));
+    }
+  };
 
   const handleAuditSearch = async () => {
     if (!auditSearchVal && !auditDateFrom) return;
@@ -1056,39 +1167,48 @@ const Dashboard = () => {
             )}
           </div>
 
-          {/* Action Footer */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', borderTop: '1px solid #f0f0f0', paddingTop: '16px' }}>
-            <button 
-              onClick={() => { setActionType('REJECTED'); setShowActionModal(true); }}
-              disabled={!isPending}
-              style={{ 
-                background: 'transparent', 
-                border: 'none', 
-                color: isPending ? '#a51010' : '#8c8c8c', 
-                fontWeight: 500, 
-                cursor: isPending ? 'pointer' : 'not-allowed',
-                opacity: isPending ? 1 : 0.6
-              }}
-            >
-              Reject
-            </button>
-            <button 
-              onClick={() => { setActionType('APPROVED'); setShowActionModal(true); }}
-              disabled={!isPending}
-              style={{ 
-                background: isPending ? '#52c41a' : '#f5f5f5', 
-                border: isPending ? 'none' : '1px solid #d9d9d9', 
-                color: isPending ? '#fff' : '#bfbfbf', 
-                padding: '8px 24px', 
-                borderRadius: '4px', 
-                fontWeight: 500, 
-                cursor: isPending ? 'pointer' : 'not-allowed',
-                filter: isPending ? 'none' : 'grayscale(1)'
-              }}
-            >
-              Approve
-            </button>
-          </div>
+          {/* Action Footer - Only visible to Ops Checker */}
+          {isOpsChecker && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', borderTop: '1px solid #f0f0f0', paddingTop: '16px' }}>
+              <button 
+                onClick={() => { setActionType('REJECTED'); setShowActionModal(true); }}
+                disabled={!isPending}
+                style={{ 
+                  background: 'transparent', 
+                  border: 'none', 
+                  color: isPending ? '#a51010' : '#8c8c8c', 
+                  fontWeight: 500, 
+                  cursor: isPending ? 'pointer' : 'not-allowed',
+                  opacity: isPending ? 1 : 0.6
+                }}
+              >
+                Reject
+              </button>
+              <button 
+                onClick={() => { setActionType('APPROVED'); setShowActionModal(true); }}
+                disabled={!isPending}
+                style={{ 
+                  background: isPending ? '#52c41a' : '#f5f5f5', 
+                  border: isPending ? 'none' : '1px solid #d9d9d9', 
+                  color: isPending ? '#fff' : '#bfbfbf', 
+                  padding: '8px 24px', 
+                  borderRadius: '4px', 
+                  fontWeight: 500, 
+                  cursor: isPending ? 'pointer' : 'not-allowed',
+                  filter: isPending ? 'none' : 'grayscale(1)'
+                }}
+              >
+                Approve
+              </button>
+            </div>
+          )}
+          {!isOpsChecker && (
+            <div style={{ marginTop: '24px', borderTop: '1px solid #f0f0f0', paddingTop: '16px' }}>
+               <p style={{ margin: 0, fontSize: '13px', color: '#8c8c8c', textAlign: 'center', fontStyle: 'italic' }}>
+                 Viewing as {loggedInRole === 'ROLE_OPS_MAKER' ? 'Ops Maker' : 'Administrator'}. Action buttons are restricted for this role.
+               </p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1400,6 +1520,204 @@ const Dashboard = () => {
       </div>
     );
   };
+  const renderCreateCbcUser = () => {
+    if (cbcFormStep === 1) {
+      const fieldMapping = [
+        { label: 'First Name', name: 'firstName', placeholder: 'Enter First Name' },
+        { label: 'Last Name', name: 'lastName', placeholder: 'Enter Last Name' },
+        { label: 'Username', name: 'username', placeholder: 'Enter Username' },
+        { label: 'Mobile Number', name: 'mobileNumber', placeholder: 'Enter Mobile Number' },
+        { label: 'Email Address', name: 'emailAddress', placeholder: 'Enter Email Address' },
+        { label: 'Admin Name', name: 'adminName', placeholder: 'Enter Admin Name' },
+        { label: 'Address Line 1', name: 'addressLine1', placeholder: 'Enter Address Line 1' },
+        { label: 'Address Line 2', name: 'addressLine2', placeholder: 'Enter Address Line 2' },
+        { label: 'City', name: 'city', placeholder: 'Enter City' },
+        { label: 'PIN', name: 'pin', placeholder: 'Enter PIN' }
+      ];
+
+      return (
+        <div className="create-cbc-view p-24" style={{ animation: 'fadeIn 0.3s ease-out' }}>
+          <div className="breadcrumb text-secondary" style={{ fontSize: '13px', marginBottom: '8px' }}>
+            User Management  /  <span style={{ color: '#262626', fontWeight: 500 }}>Create CBC User</span>
+          </div>
+          <h2 style={{ fontSize: '20px', fontWeight: 600, color: '#262626', marginBottom: '24px' }}>Create CBC User</h2>
+
+          <div className="form-card" style={{ background: '#fff', borderRadius: '8px', padding: '32px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', border: '1px solid #f0f0f0' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px 32px' }}>
+              {fieldMapping.map((field) => (
+                <div key={field.name} className="form-field-group">
+                  <label style={{ display: 'block', fontSize: '14px', color: '#8c8c8c', marginBottom: '8px' }}>{field.label}</label>
+                  <input
+                    type="text"
+                    name={field.name}
+                    value={cbcFormData[field.name]}
+                    onChange={handleCbcInputChange}
+                    placeholder={field.placeholder}
+                    className="nsdl-input-field"
+                    style={{ width: '100%', height: '40px', padding: '0 12px', borderRadius: '4px', border: '1px solid #d9d9d9', outline: 'none' }}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '24px', marginTop: '40px' }}>
+              <span onClick={() => setActiveMenu('dashboard')} style={{ color: '#A51010', cursor: 'pointer', fontSize: '15px' }}>Cancel</span>
+              <button 
+                onClick={() => {
+                  sessionStorage.setItem('cbc_draft_data', JSON.stringify(cbcFormData));
+                  setCbcFormStep(2);
+                }} 
+                style={{ background: '#A51010', color: '#fff', padding: '10px 32px', borderRadius: '6px', border: 'none', cursor: 'pointer' }}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // STEP 2: The Extended Form
+    const s2Fields = [
+      { label: 'CBC Name', name: 'cbcName' },
+      { label: 'Company Name', name: 'companyName' },
+      { label: 'PAN', name: 'pan' },
+      { label: 'PAN Number', name: 'panNumber' },
+      { label: 'Admin Name', name: 'adminName' },
+      { label: 'Admin Email', name: 'adminEmail' },
+      { label: 'Admin Mobile Number', name: 'mobileNumber' },
+      { label: 'Business Address Line 1', name: 'businessAddressLine1' },
+      { label: 'Business Address Line 2', name: 'businessAddressLine2' },
+      { label: 'Country', name: 'country' },
+      { label: 'State', name: 'state' },
+      { label: 'City', name: 'city2' },
+      { label: 'PIN', name: 'pin' },
+      { label: 'Account Number', name: 'accountNo' },
+      { label: 'GST Number', name: 'gstNumber' },
+      { label: 'Telephone Number', name: 'telephone' },
+      { label: 'Affiliation Fee', name: 'affiliationFee' },
+      { label: 'Entity ID (Referrer)', name: 'entityId' },
+      { label: 'Number of Staff', name: 'staffCount' },
+      { label: 'Agreement From Date', name: 'agreementFrom', type: 'date' },
+      { label: 'Agreement To Date', name: 'agreementTo', type: 'date' },
+      { label: 'Entity PAN Card', name: 'entityPan' }
+    ];
+
+    const uploads = [
+      'Upload Bank Resolution', 'Upload Authorized Signatory KYC', 
+      'Upload Board Resolution', 'Upload Address Proof',
+      'Upload Certificate of Incorporation', 'Upload First Page of Agreement',
+      'Upload Last Page of Agreement', 'Upload Business Proposal'
+    ];
+
+    return (
+      <div className="create-cbc-view p-24" style={{ height: 'calc(100vh - 120px)', overflowY: 'auto', animation: 'fadeIn 0.3s ease-out' }}>
+        <div className="breadcrumb text-secondary" style={{ fontSize: '12px', marginBottom: '8px' }}>
+          User Management  /  Create CBC User
+        </div>
+        <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '24px' }}>Create CBC User</h2>
+
+        <div className="form-card" style={{ background: '#fff', borderRadius: '8px', padding: '32px', border: '1px solid #f0f0f0' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px 30px' }}>
+            {s2Fields.map(f => {
+              const hasError = cbcFormErrors[f.name];
+              const isPanField = ['pan', 'panNumber', 'entityPan'].includes(f.name);
+              
+              return (
+                <div key={f.name}>
+                  <label style={{ display: 'block', fontSize: '13px', color: '#8c8c8c', marginBottom: '6px' }}>{f.label}</label>
+                  <input 
+                    type={f.type || 'text'} 
+                    name={f.name}
+                    value={cbcFormData[f.name]}
+                    onChange={handleCbcInputChange}
+                    onBlur={isPanField ? handlePanBlur : undefined}
+                    placeholder={`Enter ${f.label}`}
+                    style={{ 
+                      width: '100%', 
+                      height: '38px', 
+                      padding: '0 12px', 
+                      borderRadius: '4px', 
+                      border: `1px solid ${hasError ? '#A51010' : '#d9d9d9'}`, 
+                      outline: 'none',
+                      transition: 'border-color 0.2s'
+                    }}
+                  />
+                  {hasError && <div style={{ color: '#A51010', fontSize: '11px', marginTop: '4px' }}>{hasError}</div>}
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ marginTop: '30px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+             {uploads.map((up, i) => (
+                <div key={i} style={{ border: '1px dashed #d9d9d9', borderRadius: '4px', padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                   <span style={{ fontSize: '13px', color: '#595959' }}>{up}</span>
+                   <div style={{ display: 'flex', gap: '10px' }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8c8c8c" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8c8c8c" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+                   </div>
+                </div>
+             ))}
+          </div>
+
+          <div style={{ marginTop: '30px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+             <input type="checkbox" name="sameAsBusiness" checked={cbcFormData.sameAsBusiness} onChange={handleCbcInputChange} style={{ accentColor: '#A51010' }} />
+             <span style={{ fontSize: '14px', fontWeight: 500 }}>Same as Business Address</span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px 30px', marginTop: '20px' }}>
+             {[
+               { label: 'Incorporation Address Line 1', name: 'incAddress1' },
+               { label: 'Incorporation Address Line 2', name: 'incAddress2' },
+               { label: 'Country', name: 'incCountry' },
+               { label: 'State', name: 'incState' },
+               { label: 'City', name: 'incCity' },
+               { label: 'PIN', name: 'incPin' }
+             ].map((f, i) => (
+                <div key={i}>
+                   <label style={{ display: 'block', fontSize: '13px', color: '#8c8c8c', marginBottom: '6px' }}>{f.label}</label>
+                   <input 
+                     type="text" 
+                     name={f.name}
+                     value={cbcFormData[f.name]}
+                     onChange={handleCbcInputChange}
+                     placeholder={`Enter ${f.label}`}
+                     style={{ width: '100%', height: '38px', padding: '0 12px', borderRadius: '4px', border: '1px solid #d9d9d9', outline: 'none' }} 
+                   />
+                </div>
+             ))}
+          </div>
+
+          <div style={{ marginTop: '30px' }}>
+             <label style={{ display: 'block', fontSize: '13px', color: '#8c8c8c', marginBottom: '6px' }}>Product Features</label>
+             <select style={{ width: '100%', height: '38px', padding: '0 12px', borderRadius: '4px', border: '1px solid #d9d9d9', outline: 'none' }}>
+                <option>Select Product Features</option>
+             </select>
+          </div>
+
+          <div style={{ marginTop: '30px', padding: '16px', background: '#fafafa', borderRadius: '4px', fontSize: '12px', color: '#595959', lineHeight: '1.6' }}>
+             <div style={{ display: 'flex', gap: '10px' }}>
+                <input type="checkbox" style={{ marginTop: '4px', accentColor: '#A51010' }} defaultChecked />
+                <span>
+                  By using our services, you confirm that you are at least 18 years old and legally capable of entering into agreements. You are responsible for securing your account details and for any activity under your account. Fees may apply to certain services, which will be disclosed at the time of use. Services are provided for personal, lawful purposes only. Your personal data will be handled in accordance with our Privacy Policy. We may update these terms from time to time, and your continued use of the services constitutes acceptance of any changes. We are not liable for any damages arising from the use of our services, except where required by law. We reserve the right to suspend or terminate your access if you violate these terms. These terms are governed by the laws of [Jurisdiction].
+                </span>
+             </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '24px', marginTop: '40px' }}>
+            <span onClick={() => setCbcFormStep(1)} style={{ color: '#A51010', cursor: 'pointer', fontSize: '15px' }}>Cancel</span>
+            <button 
+              onClick={() => setStatusModal({ show: true, type: 'success', title: 'Success', message: 'CBC User data submitted successfully!' })} 
+              style={{ background: '#A51010', color: '#fff', padding: '10px 48px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="dashboard-container">
@@ -1421,6 +1739,7 @@ const Dashboard = () => {
             </div>
             {userMgmtOpen && (
               <>
+                {isOpsMaker && <div className={`menu-item ${activeMenu === 'create-cbc' ? 'active' : ''}`} style={{ paddingLeft: '40px' }} onClick={() => setActiveMenu('create-cbc')}>Create CBC User</div>}
                 <div className={`menu-item ${activeMenu === 'user-request' ? 'active' : ''}`} style={{ paddingLeft: '40px' }} onClick={() => setActiveMenu('user-request')}>User Request</div>
                 <div className={`menu-item ${activeMenu === 'user-list-report' ? 'active' : ''}`} style={{ paddingLeft: '40px' }} onClick={() => setActiveMenu('user-list-report')}>User List Report</div>
               </>
@@ -1504,6 +1823,7 @@ const Dashboard = () => {
           {activeMenu === 'audit-trail' && renderAuditTrail()} 
           {activeMenu === 'admin-profile' && renderAdminProfile()}
           {activeMenu === 'profile' && renderProfile()}
+          {activeMenu === 'create-cbc' && renderCreateCbcUser()}
         </main>
       </div>
 

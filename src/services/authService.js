@@ -312,13 +312,22 @@ export async function verifyForgotPasswordOtp(username, otp) {
 }
 
 /**
- * Update CBC User Status (Approve/Reject)
- * @param {string} token - Logged in access_token
- * @param {object} data - { status, remarks: { comments, description }, username }
+ * Update User Status (Approve/Reject)
+ * Base URLs change depending on the role of the user being reviewed.
  */
 export async function updateCbcStatus(token, data) {
-  const URL = "https://apidev-sdk.iserveu.online/NSDL/user_onboarding_report/cbc-status-update";
+  let URL = "https://apidev-sdk.iserveu.online/NSDL/user_onboarding_report/cbc-status-update";
   
+  const targetRole = (data.targetRole || '').toUpperCase();
+  
+  if (targetRole.includes('MAKER')) {
+    URL = "https://apidev-sdk.iserveu.online/NSDL/user_onboarding_report/cbc-maker-status-update";
+  } else if (targetRole.includes('AGENT') || targetRole.includes('RETAILER')) {
+    URL = "https://apidev-sdk.iserveu.online/NSDL/user_onboarding_report/agent-status-update";
+  } else if (targetRole.includes('ADMIN') || targetRole.includes('CBC')) {
+    URL = "https://apidev-sdk.iserveu.online/NSDL/user_onboarding_report/cbc-status-update";
+  }
+
   const payload = {
     status: data.status,
     remarks: {

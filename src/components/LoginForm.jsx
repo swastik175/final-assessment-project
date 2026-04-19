@@ -79,9 +79,7 @@ const LoginForm = ({ onLoginSuccess }) => {
       
       const token = response?.access_token || response?.userInfo?.token || response?.data?.access_token;
       
-      // TEMPORARY: Bypassing reset check for development as per user request
-      // Mandatory Check: if isPasswordResetRequired is true (as bool or string "true"), FORCE popup and BLOCK dashboard
-      const resetRequired = false; // Original logic: response?.isPasswordResetRequired === true || response?.isPasswordResetRequired === "true";
+      const resetRequired = response?.isPasswordResetRequired === true || response?.isPasswordResetRequired === "true";
       
       if (resetRequired) {
         console.warn('⚠️ ACTION REQUIRED: Password reset is mandatory for this user.');

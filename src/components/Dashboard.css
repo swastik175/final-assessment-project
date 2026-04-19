@@ -85,7 +85,7 @@
 }
 
 .menu-item.active .icon svg {
-  fill: #A51010;
+  stroke: #A51010;
 }
 
 /* ── MAIN CONTENT ── */

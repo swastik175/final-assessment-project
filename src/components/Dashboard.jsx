@@ -95,11 +95,24 @@ const Dashboard = () => {
   const [listReportPage, setListReportPage] = useState(1);
   const [listReportRowsPerPage, setListReportRowsPerPage] = useState(10);
 
+  // Audit Trail Pagination
+  const [auditTrailPage, setAuditTrailPage] = useState(1);
+  const [auditTrailRowsPerPage, setAuditTrailRowsPerPage] = useState(10);
+
   // Audit Trail Specific State
   const [auditSearchVal, setAuditSearchVal] = useState('');
   const [auditDateFrom, setAuditDateFrom] = useState('');
   const [auditDateTo, setAuditDateTo] = useState('');
-  const [auditTableData, setAuditTableData] = useState([]);
+  
+  // Default mock data to be shown immediately without search
+  const defaultAuditTrail = [
+    { fieldName: 'Agent Status', userName: 'AG000052', userId: 'Agent', adminName: 'Arun Kumar', adminId: 'ADM001', createdDate: '10/04/2026', updatedDate: '12/04/2026', operationPerformed: 'Status Updated to APPROVED' },
+    { fieldName: 'CBC Creation', userName: 'CBC000101', userId: 'CBC', adminName: 'Priya Sharma', adminId: 'ADM005', createdDate: '05/04/2026', updatedDate: '05/04/2026', operationPerformed: 'New User Onboarded' },
+    { fieldName: 'Maker Access', userName: 'CBCM000051', userId: 'CBC Maker', adminName: 'Vikram Singh', adminId: 'ADM010', createdDate: '15/04/2026', updatedDate: '15/04/2026', operationPerformed: 'Assigned Maker Permissions' },
+    { fieldName: 'Distributor Link', userName: 'DS000091', userId: 'Distributor', adminName: 'Monica Geller', adminId: 'MKR099', createdDate: '18/04/2026', updatedDate: '19/04/2026', operationPerformed: 'Linked to Regional MDS' }
+  ];
+
+  const [auditTableData, setAuditTableData] = useState(defaultAuditTrail);
   const [isAuditTableLoading, setIsAuditTableLoading] = useState(false);
   const [hasSearchedAudit, setHasSearchedAudit] = useState(false);
 
@@ -194,9 +207,43 @@ const Dashboard = () => {
   };
 
   const handleAuditSearch = async () => {
-    if (!auditSearchVal && !auditDateFrom) return;
+    if (!auditSearchVal && !auditDateFrom) {
+       setAuditTableData(defaultAuditTrail);
+       setAuditTrailPage(1);
+       return;
+    }
+    
     setIsAuditTableLoading(true);
     setHasSearchedAudit(true);
+    setAuditTrailPage(1);
+
+    // Dummy data for specific usernames requested by the USER
+    const dummyData = {
+      'AG000052': [
+        { fieldName: 'Agent Status', userName: 'AG000052', userId: 'Agent', adminName: 'Arun Kumar', adminId: 'ADM001', createdDate: '10/04/2026', updatedDate: '12/04/2026', operationPerformed: 'Status Updated to APPROVED' },
+        { fieldName: 'Address Update', userName: 'AG000052', userId: 'Agent', adminName: 'Suresh Raina', adminId: 'MKR012', createdDate: '08/04/2026', updatedDate: '09/04/2026', operationPerformed: 'Updated Business Address' }
+      ],
+      'CBC000101': [
+        { fieldName: 'CBC Creation', userName: 'CBC000101', userId: 'CBC', adminName: 'Priya Sharma', adminId: 'ADM005', createdDate: '05/04/2026', updatedDate: '05/04/2026', operationPerformed: 'New User Onboarded' },
+        { fieldName: 'PAN Verification', userName: 'CBC000101', userId: 'CBC', adminName: 'Rahul Dravid', adminId: 'CHK088', createdDate: '06/04/2026', updatedDate: '07/04/2026', operationPerformed: 'KYC Verified Successfully' }
+      ],
+      'CBCM000051': [
+        { fieldName: 'Maker Access', userName: 'CBCM000051', userId: 'CBC Maker', adminName: 'Vikram Singh', adminId: 'ADM010', createdDate: '15/04/2026', updatedDate: '15/04/2026', operationPerformed: 'Assigned Maker Permissions' }
+      ],
+      'DS000091': [
+        { fieldName: 'Distributor Link', userName: 'DS000091', userId: 'Distributor', adminName: 'Monica Geller', adminId: 'MKR099', createdDate: '18/04/2026', updatedDate: '19/04/2026', operationPerformed: 'Linked to Regional MDS' },
+        { fieldName: 'Status Update', userName: 'DS000091', userId: 'Distributor', adminName: 'Joey Tribbiani', adminId: 'CHK001', createdDate: '19/04/2026', updatedDate: '19/04/2026', operationPerformed: 'Status Rejected (Documents Missing)' }
+      ]
+    };
+
+    if (dummyData[auditSearchVal]) {
+      setTimeout(() => {
+        setAuditTableData(dummyData[auditSearchVal]);
+        setIsAuditTableLoading(false);
+      }, 600);
+      return;
+    }
+
     const token = sessionStorage.getItem('access_token');
     
     // Explicitly call the audit search API
@@ -439,7 +486,8 @@ const Dashboard = () => {
         comments: actionComments,
         description: actionDescription
       },
-      username: selectedUserData?.["1"]?.userName || selectedUserData?.username
+      username: selectedUserData?.["1"]?.userName || selectedUserData?.username,
+      targetRole: selectedUserData?.userRole // Crucial for dynamic URL selection in service layer
     };
 
     try {
@@ -531,7 +579,7 @@ const Dashboard = () => {
                   // I'll add a check or the user can just type then hit Enter.
                 }}
                 onKeyUp={(e) => { if (e.key === 'Enter') handleAuditSearch(); }}
-                style={{ width: '180px', border: 'none', outline: 'none', marginLeft: '8px', fontSize: '14px' }}
+                style={{ flex: 1, border: 'none', outline: 'none', fontSize: '14px', textAlign: 'center' }}
               />
             </div>
 
@@ -588,7 +636,7 @@ const Dashboard = () => {
                 {isAuditTableLoading ? (
                   <tr><td colSpan="9" style={{ textAlign: 'center', padding: '40px', color: '#a80000' }}>Loading dynamic audit data...</td></tr>
                 ) : auditTableData.length > 0 ? (
-                  auditTableData.map((row, idx) => (
+                  auditTableData.slice((auditTrailPage - 1) * auditTrailRowsPerPage, auditTrailPage * auditTrailRowsPerPage).map((row, idx) => (
                     <tr key={idx} style={{ borderBottom: '1px solid #f0f0f0', height: '56px' }}>
                       <td style={{ textAlign: 'center' }}><div className="checkbox-cell"><input type="checkbox" /></div></td>
                       <td style={{ padding: '12px', fontSize: '14px' }}>{row.fieldName || row.role || 'Maker'}</td>
@@ -618,24 +666,58 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Pagination from Screenshot */}
+        {/* Pagination */}
         <div className="pagination-bar" style={{ marginTop: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '14px', color: '#8c8c8c' }}>
             <span>Row per page</span>
-            <select style={{ border: '1px solid #d9d9d9', borderRadius: '4px', padding: '2px 8px', height: '32px' }}>
-              <option>3</option>
-              <option>10</option>
-              <option>20</option>
+            <select 
+              value={auditTrailRowsPerPage} 
+              onChange={(e) => { setAuditTrailRowsPerPage(Number(e.target.value)); setAuditTrailPage(1); }}
+              style={{ border: '1px solid #d9d9d9', borderRadius: '4px', padding: '2px 8px', height: '32px', outline: 'none' }}
+            >
+              <option value="5">5</option>
+              <option value="10">10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
             </select>
-            <span style={{ marginLeft: '12px' }}>Go to</span>
-            <input type="text" defaultValue="9" style={{ width: '40px', height: '32px', border: '1px solid #d9d9d9', borderRadius: '4px', textAlign: 'center', outline: 'none' }} />
+            <span style={{ marginLeft: '12px' }}>
+              Showing {(auditTrailPage - 1) * auditTrailRowsPerPage + 1} - {Math.min(auditTrailPage * auditTrailRowsPerPage, auditTableData.length)} of {auditTableData.length}
+            </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button style={{ border: '1px solid #f0f0f0', background: '#fff', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', cursor: 'pointer' }}>
+            <button 
+              disabled={auditTrailPage === 1}
+              onClick={() => setAuditTrailPage(p => p - 1)}
+              style={{ border: '1px solid #f0f0f0', background: '#fff', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', cursor: auditTrailPage === 1 ? 'not-allowed' : 'pointer', opacity: auditTrailPage === 1 ? 0.5 : 1 }}
+            >
                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#bfbfbf" strokeWidth="2"><polyline points="15 18 9 12 15 6" /></svg>
             </button>
-            <span style={{ fontSize: '14px', margin: '0 8px' }}>1  ...  4  5  <span style={{ background: '#fff', border: '1px solid #a80000', color: '#a80000', padding: '4px 10px', borderRadius: '4px' }}>6</span>  7  8  ...  50</span>
-            <button style={{ border: '1px solid #f0f0f0', background: '#fff', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', cursor: 'pointer' }}>
+            
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {Array.from({ length: Math.ceil(auditTableData.length / auditTrailRowsPerPage) }, (_, i) => i + 1).map(p => (
+                <button 
+                  key={p} 
+                  onClick={() => setAuditTrailPage(p)}
+                  style={{ 
+                    background: auditTrailPage === p ? '#fff' : 'transparent', 
+                    border: auditTrailPage === p ? '1px solid #a80000' : '1px solid transparent', 
+                    color: auditTrailPage === p ? '#a80000' : '#595959', 
+                    padding: '4px 10px', 
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '14px'
+                  }}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+
+            <button 
+              disabled={auditTrailPage === Math.ceil(auditTableData.length / auditTrailRowsPerPage) || auditTableData.length === 0}
+              onClick={() => setAuditTrailPage(p => p + 1)}
+              style={{ border: '1px solid #f0f0f0', background: '#fff', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px', cursor: (auditTrailPage === Math.ceil(auditTableData.length / auditTrailRowsPerPage) || auditTableData.length === 0) ? 'not-allowed' : 'pointer', opacity: (auditTrailPage === Math.ceil(auditTableData.length / auditTrailRowsPerPage) || auditTableData.length === 0) ? 0.5 : 1 }}
+            >
                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#595959" strokeWidth="2"><polyline points="9 18 15 12 9 6" /></svg>
             </button>
           </div>
@@ -1749,10 +1831,27 @@ const Dashboard = () => {
           </div>
           <nav className="menu-nav">
             <div className={`menu-item ${activeMenu === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveMenu('dashboard')}>
-              <span className="icon">🏠</span> Dashboard
+              <span className="icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="M20 12h2" /><path d="m19.07 4.93-1.41 1.41" /><path d="M15.947 12.65a4 4 0 1 1-5.925-4.128" /><path d="M13 13l3-3" />
+                </svg>
+              </span> 
+              Dashboard
             </div>
-            <div className="menu-item menu-parent" onClick={() => setUserMgmtOpen(!userMgmtOpen)} style={{ cursor: 'pointer' }}>
-              <span className="icon">👥</span>
+
+            <div style={{ padding: '20px 16px 8px', fontSize: '11px', fontWeight: 600, color: '#bfbfbf', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Widgets
+            </div>
+
+            <div className={`menu-item menu-parent ${['user-request', 'user-list-report', 'create-cbc'].includes(activeMenu) ? 'active' : ''}`} onClick={() => setUserMgmtOpen(!userMgmtOpen)} style={{ cursor: 'pointer' }}>
+              <span className="icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+              </span>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flex: 1 }}>
                 <span>User Management</span>
                 <span style={{ fontSize: '10px' }}>{userMgmtOpen ? '▲' : '▼'}</span>
@@ -1765,7 +1864,18 @@ const Dashboard = () => {
                 <div className={`menu-item ${activeMenu === 'user-list-report' ? 'active' : ''}`} style={{ paddingLeft: '40px' }} onClick={() => setActiveMenu('user-list-report')}>User List Report</div>
               </>
             )}
-            <div className={`menu-item ${activeMenu === 'audit-trail' ? 'active' : ''}`} onClick={() => setActiveMenu('audit-trail')}><span className="icon">📜</span> Audit Trail</div>
+            <div className={`menu-item ${activeMenu === 'audit-trail' ? 'active' : ''}`} onClick={() => setActiveMenu('audit-trail')}>
+              <span className="icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                  <line x1="10" y1="9" x2="8" y2="9" />
+                </svg>
+              </span> 
+              Audit Trail
+            </div>
           </nav>
         </aside>
       )}
@@ -1773,8 +1883,12 @@ const Dashboard = () => {
       <div className="dashboard-frame">
         <header className="global-header">
           <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-            <div onClick={() => setSidebarOpen(!sidebarOpen)} style={{ cursor: 'pointer', padding: '8px' }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#595959" strokeWidth="2"><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="18" x2="21" y2="18" /></svg>
+            <div onClick={() => setSidebarOpen(!sidebarOpen)} style={{ cursor: 'pointer', padding: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="22" height="16" viewBox="0 0 22 16" fill="none">
+                <path d="M1 1H21" stroke="#595959" strokeWidth="2.5" strokeLinecap="round"/>
+                <path d="M1 8H14" stroke="#595959" strokeWidth="2.5" strokeLinecap="round"/>
+                <path d="M1 15H21" stroke="#595959" strokeWidth="2.5" strokeLinecap="round"/>
+              </svg>
             </div>
           </div>
           <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>

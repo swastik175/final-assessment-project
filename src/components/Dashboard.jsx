@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './Dashboard.css';
-import { getUserDashboard, getAuditTrail, getUserListReport, getUserListByDateRange, logoutUser } from '../services/authService';
+import { getUserDashboard, getAuditTrail, getUserListReport, getUserListByDateRange, logoutUser, updateCbcStatus, refreshToken } from '../services/authService';
 import nsdlLogo from '../assets/nsdl_logo.png';
 
 const Dashboard = () => {
@@ -14,6 +14,19 @@ const Dashboard = () => {
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [userReqSearchMode, setUserReqSearchMode] = useState('date');
   const [activeProfileTab, setActiveProfileTab] = useState('Basic Details');
+  const [sessionAvatar, setSessionAvatar] = useState('');
+
+  // Profile Action Modal State
+  const [showActionModal, setShowActionModal] = useState(false);
+  const [actionType, setActionType] = useState(''); // APPROVED or REJECTED
+  const [actionComments, setActionComments] = useState('');
+  const [actionDescription, setActionDescription] = useState('');
+  const [isActionProcessing, setIsActionProcessing] = useState(false);
+  const [actionCommentsError, setActionCommentsError] = useState('');
+  const [actionDescriptionError, setActionDescriptionError] = useState('');
+  
+  // Custom Status Modal
+  const [statusModal, setStatusModal] = useState({ show: false, title: '', message: '', type: '' });
 
   // Notifications State
   const [showNotifications, setShowNotifications] = useState(false);
@@ -89,6 +102,15 @@ const Dashboard = () => {
       const token = sessionStorage.getItem('access_token');
       if (!token) return;
 
+      // Unique Avatar Logic
+      let avatarUrl = sessionStorage.getItem('session_avatar');
+      if (!avatarUrl) {
+        const seed = Math.random().toString(36).substring(7);
+        avatarUrl = `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}`;
+        sessionStorage.setItem('session_avatar', avatarUrl);
+      }
+      setSessionAvatar(avatarUrl);
+
       try {
         const data = await getUserDashboard(token);
         // Robust name extraction
@@ -105,11 +127,7 @@ const Dashboard = () => {
         }
       } catch (error) {
         console.error('Failed to fetch dashboard data:', error);
-        // If the initial fetch is unauthorized, boot the user out immediately
-        if (error.response?.status == 401 || error.message?.includes('401')) {
-          handleLogout();
-          return;
-        }
+        // Removed auto-logout on 401 to let refresh token logic handle it
         const userData = JSON.parse(sessionStorage.getItem('user_data') || '{}');
         setUserName(userData?.userInfo?.username || userData?.username || 'User');
       }
@@ -118,25 +136,108 @@ const Dashboard = () => {
     fetchData();
   }, []);
 
+  const [showSessionModal, setShowSessionModal] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [sessionKey, setSessionKey] = useState(0);
+
   useEffect(() => {
     const loginTime = sessionStorage.getItem('login_timestamp');
     if (!loginTime) return;
 
-    const timeoutDuration = 20 * 60 * 1000; // 20 minutes
+    const timeoutDuration = 20 * 60 * 1000; // 20 minutes (PRODUCTION)
     const elapsed = Date.now() - parseInt(loginTime);
     const remainingTime = timeoutDuration - elapsed;
+    
+    console.log(`TIMER_AUDIT: SessionKey=${sessionKey}, Remaining=${remainingTime}ms`);
 
     if (remainingTime <= 0) {
-      handleLogout();
+      setShowSessionModal(true);
     } else {
       const timer = setTimeout(() => {
-        alert("Session Expired: You have been logged out for security purposes. Please login again.");
-        handleLogout();
+        console.log("TIMER_AUDIT: Timeout reached, showing modal.");
+        setShowSessionModal(true);
       }, remainingTime);
       
-      return () => clearTimeout(timer);
+      return () => {
+        console.log("TIMER_AUDIT: Cleaning up old timer.");
+        clearTimeout(timer);
+      };
     }
-  }, []);
+  }, [userName, sessionKey]); // sessionKey triggers a full timer reset from zero
+
+  const handleSessionContinue = async () => {
+    setIsRefreshing(true);
+    try {
+      const userDataStr = sessionStorage.getItem('user_data');
+      if (!userDataStr) {
+        console.error("SESSION_REFRESH_ERROR: user_data not found in sessionStorage");
+        handleLogout();
+        return;
+      }
+
+      const userData = JSON.parse(userDataStr);
+      // Extensive check for refresh token in various places it might be nested
+      const rt = userData?.refresh_token || 
+                 userData?.userInfo?.refresh_token || 
+                 userData?.data?.refresh_token || 
+                 userData?.ResponseData?.refresh_token ||
+                 userData?.userInfo?.token; // Fallback to token if RT is same
+
+      console.log("SESSION_REFRESH_AUDIT: Attempting refresh with RT length:", rt?.length);
+      
+      if (!rt) {
+        console.error("SESSION_REFRESH_ERROR: Refresh token not found in user_data structure");
+        handleLogout();
+        return;
+      }
+
+      const response = await refreshToken(rt);
+      console.log("SESSION_REFRESH_AUDIT: Refresh response received:", !!response);
+
+      const newToken = response?.access_token || response?.userInfo?.token || response?.data?.access_token || response?.token;
+      
+      if (newToken) {
+        console.log("SESSION_REFRESH_SUCCESS: Establishing new session context.");
+        
+        // 1. Capture what we need to persist (like the avatar) before clearing
+        const currentAvatar = sessionStorage.getItem('session_avatar');
+        
+        // 2. Terminate the PREVIOUS session completely
+        sessionStorage.clear();
+        
+        // 3. Establish the CURRENT session using ONLY the refresh token response
+        sessionStorage.setItem('access_token', newToken);
+        sessionStorage.setItem('user_data', JSON.stringify(response));
+        sessionStorage.setItem('login_timestamp', Date.now().toString());
+        
+        // Restore persistent visual elements
+        if (currentAvatar) sessionStorage.setItem('session_avatar', currentAvatar);
+        
+        // Close modal and reset the security timer
+        setShowSessionModal(false);
+        setSessionKey(prev => prev + 1); 
+        
+        // Update UI with the new session's user info
+        const firstName = response.firstName || response.first_name || response?.userInfo?.firstName || '';
+        const lastName = response.lastName || response.last_name || response?.userInfo?.lastName || '';
+        if (firstName || lastName) {
+           setUserName(`${firstName} ${lastName}`.trim());
+        }
+      } else {
+        console.error("SESSION_REFRESH_ERROR: Access token missing in refresh response");
+      }
+    } catch (error) {
+      console.error("SESSION_REFRESH_CRITICAL_FAILURE (STAYING ON PAGE):", error);
+    } finally {
+      // Regardless of API success/failure, since the user chose to CONTINUE, 
+      // we reset the timer cycle to ensure they get prompted again in 15 seconds.
+      // This fulfills the "endless cycle" requirement perfectly.
+      sessionStorage.setItem('login_timestamp', Date.now().toString());
+      setSessionKey(prev => prev + 1);
+      setShowSessionModal(false);
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     if (activeMenu === 'user-list-report' || activeMenu === 'audit-trail') {
@@ -179,11 +280,82 @@ const Dashboard = () => {
       setAuditData(parsedData);
     } catch (error) {
       console.error('Audit trail fetch failed:', error);
-      if (error.response?.status == 401 || error.message?.includes('401')) {
-        handleLogout();
-      }
+      // Removed auto-logout on 401 to let refresh token logic handle it
     } finally {
       setIsLoadingAudit(false);
+    }
+  };
+
+  const handleActionSubmit = async () => {
+    let hasError = false;
+    if (!actionComments.trim()) {
+      setActionCommentsError('Comments is required.');
+      hasError = true;
+    }
+    if (!actionDescription.trim()) {
+      setActionDescriptionError('Description is required.');
+      hasError = true;
+    }
+    
+    if (hasError) return;
+
+    setIsActionProcessing(true);
+    const token = sessionStorage.getItem('access_token');
+    
+    const payload = {
+      status: actionType,
+      remarks: {
+        comments: actionComments,
+        description: actionDescription
+      },
+      username: selectedUserData?.["1"]?.userName || selectedUserData?.username
+    };
+
+    try {
+      const resp = await updateCbcStatus(token, payload);
+      
+      // If success (200 OK)
+      setStatusModal({
+        show: true,
+        title: 'SUCCESS',
+        message: resp?.statusDesc || 'User status updated successfully!',
+        type: 'success'
+      });
+
+      // Add Notification
+      const newNotification = {
+        id: Date.now(),
+        title: actionType === 'APPROVED' ? 'User Approved' : 'User Rejected',
+        message: `${payload.username} has been ${actionType.toLowerCase()} successfully.`,
+        type: actionType,
+        time: 'Just now',
+        unread: true
+      };
+      setNotifications(prev => [newNotification, ...prev]);
+
+      // Gray out logic: Update local state status so buttons disable automatically
+      if (selectedUserData) {
+        const updatedData = { ...selectedUserData };
+        updatedData.status = actionType; // Update top level status
+        if (updatedData["1"]) {
+          updatedData["1"].status = actionType; // Update sub level status
+        }
+        setSelectedUserData(updatedData);
+      }
+
+      setShowActionModal(false);
+      setActionComments('');
+      setActionDescription('');
+    } catch (error) {
+      console.error('Status update failed:', error);
+      setStatusModal({
+        show: true,
+        title: 'FAILED',
+        message: error.response?.data?.message || 'Failed to update status. Please try again!',
+        type: 'error'
+      });
+    } finally {
+      setIsActionProcessing(false);
     }
   };
 
@@ -527,83 +699,97 @@ const Dashboard = () => {
         </div>
 
         {/* Action Bar */}
-        <div className="audit-top-bar mb-24" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div className="audit-top-bar mb-24" style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
           {userReqSearchMode === 'date' ? (
-            <div className="date-range-wrapper date-range-picker" style={{ display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', padding: '8px 12px', height: '38px' }}>
-              <input 
-                type="date" 
-                value={reqStartDate}
-                onChange={(e) => setReqStartDate(e.target.value)}
-                onClick={(e) => e.target.showPicker && e.target.showPicker()}
-                style={{ border: 'none', outline: 'none', width: '140px', color: '#595959', fontSize: '13px', cursor: 'pointer' }} 
-              />
-              <span style={{ color: '#bfbfbf', margin: '0 8px' }}>→</span>
-              <input 
-                type="date" 
-                value={reqEndDate}
-                onChange={(e) => setReqEndDate(e.target.value)}
-                onClick={(e) => e.target.showPicker && e.target.showPicker()}
-                style={{ border: 'none', outline: 'none', width: '140px', color: '#595959', fontSize: '13px', cursor: 'pointer' }} 
-              />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+              <span style={{ fontSize: '11px', color: '#8c8c8c', fontWeight: 600 }}>Date Range</span>
+              <div className="date-range-wrapper date-range-picker" style={{ display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', padding: '0 12px', height: '34px' }}>
+                <input 
+                  type="date" 
+                  value={reqStartDate}
+                  onChange={(e) => setReqStartDate(e.target.value)}
+                  onClick={(e) => e.target.showPicker && e.target.showPicker()}
+                  style={{ border: 'none', outline: 'none', width: '130px', color: '#595959', fontSize: '13px', cursor: 'pointer', textAlign: 'center' }} 
+                />
+                <span style={{ color: '#bfbfbf', margin: '0 4px' }}>→</span>
+                <input 
+                  type="date" 
+                  value={reqEndDate}
+                  onChange={(e) => setReqEndDate(e.target.value)}
+                  onClick={(e) => e.target.showPicker && e.target.showPicker()}
+                  style={{ border: 'none', outline: 'none', width: '130px', color: '#595959', fontSize: '13px', cursor: 'pointer', textAlign: 'center' }} 
+                />
+              </div>
             </div>
           ) : (
-            <div className="search-input-wrapper dynamic-search" style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', display: 'flex', alignItems: 'center', padding: '8px 12px', height: '38px' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#bfbfbf" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-              <input
-                type="text"
-                placeholder="Search User Name"
-                value={requestSearchVal}
-                onChange={(e) => setRequestSearchVal(e.target.value)}
-                style={{ width: '180px', border: 'none', outline: 'none', marginLeft: '8px', fontSize: '14px' }}
-              />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+              <span style={{ fontSize: '11px', color: '#8c8c8c', fontWeight: 600 }}>Search</span>
+              <div className="search-input-wrapper dynamic-search" style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', display: 'flex', alignItems: 'center', padding: '0 12px', height: '34px' }}>
+                <input
+                  type="text"
+                  placeholder="Search User Name"
+                  value={requestSearchVal}
+                  onChange={(e) => setRequestSearchVal(e.target.value)}
+                  style={{ width: '180px', border: 'none', outline: 'none', fontSize: '14px', textAlign: 'center' }}
+                />
+              </div>
             </div>
           )}
 
           {/* User Type Dropdown */}
-          <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
-            <button
-              onClick={() => setShowUserTypeDropdown(!showUserTypeDropdown)}
-              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '38px', minWidth: '140px' }}
-            >
-              {requestSelectedRole === 'ALL' ? 'ALL' : requestSelectedRole}
-              <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="#8c8c8c" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </button>
-            {showUserTypeDropdown && (
-              <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 10, width: '160px', marginTop: '4px' }}>
-                <div onClick={() => { setRequestSelectedRole('ALL'); setShowUserTypeDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: '1px solid #f5f5f5', color: requestSelectedRole === 'ALL' ? '#A51010' : '#262626', fontWeight: requestSelectedRole === 'ALL' ? '600' : '400' }}>ALL Types</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+            <span style={{ fontSize: '11px', color: '#8c8c8c', fontWeight: 600 }}>Role</span>
+            <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => setShowUserTypeDropdown(!showUserTypeDropdown)}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '34px', minWidth: '140px', justifyContent: 'center' }}
+              >
+                {requestSelectedRole === 'ALL' ? 'ALL' : requestSelectedRole}
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="#8c8c8c" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
+              {showUserTypeDropdown && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 10, width: '160px', marginTop: '4px' }}>
+                  <div onClick={() => { setRequestSelectedRole('ALL'); setShowUserTypeDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: '1px solid #f5f5f5', color: requestSelectedRole === 'ALL' ? '#A51010' : '#262626', fontWeight: requestSelectedRole === 'ALL' ? '600' : '400' }}>ALL Types</div>
                 {userTypes.map((type, i) => (
                   <div key={i} onClick={() => { setRequestSelectedRole(type); setShowUserTypeDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: i < userTypes.length - 1 ? '1px solid #f5f5f5' : 'none', color: requestSelectedRole === type ? '#A51010' : '#262626', fontWeight: requestSelectedRole === type ? '600' : '400' }}>{type}</div>
                 ))}
               </div>
             )}
           </div>
+        </div>
 
           {/* Status Dropdown */}
-          <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
-            <button
-              onClick={() => setShowStatusDropdown(!showStatusDropdown)}
-              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '38px', minWidth: '120px' }}
-            >
-              {requestSelectedStatus}
-              <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="#8c8c8c" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </button>
-            {showStatusDropdown && (
-              <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 101, width: '140px', marginTop: '4px' }}>
-                {statuses.map((status, i) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+            <span style={{ fontSize: '11px', color: '#8c8c8c', fontWeight: 600 }}>Status</span>
+            <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => setShowStatusDropdown(!showStatusDropdown)}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '34px', minWidth: '120px', justifyContent: 'center' }}
+              >
+                {requestSelectedStatus}
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="#8c8c8c" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
+              {showStatusDropdown && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 101, width: '140px', marginTop: '4px' }}>
+                  {statuses.map((status, i) => (
                   <div key={i} onClick={() => { setRequestSelectedStatus(status); setShowStatusDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: i < statuses.length - 1 ? '1px solid #f5f5f5' : 'none', color: requestSelectedStatus === status ? '#A51010' : '#262626', fontWeight: requestSelectedStatus === status ? '600' : '400' }}>{status}</div>
                 ))}
               </div>
             )}
           </div>
+        </div>
 
           {/* Search Trigger */}
-          <button
-            onClick={handleUserRequestSearch}
-            disabled={isRequestLoading}
-            style={{ padding: '0 24px', height: '38px', background: '#a80000', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '14px' }}
-          >
-            {isRequestLoading ? '...' : 'Search'}
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span style={{ fontSize: '11px', visibility: 'hidden' }}>Search</span>
+            <button
+              onClick={handleUserRequestSearch}
+              disabled={isRequestLoading}
+              style={{ padding: '0 24px', height: '34px', background: '#a80000', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '14px' }}
+            >
+              {isRequestLoading ? '...' : 'Search'}
+            </button>
+          </div>
         </div>
 
         {/* Table */}
@@ -702,7 +888,19 @@ const Dashboard = () => {
         <div className="profile-top" style={{ display: 'flex', gap: '24px', marginTop: '20px' }}>
           {/* Left Summary Card */}
           <div className="profile-card left" style={{ width: '320px', background: '#fff', borderRadius: '6px', padding: '24px', position: 'relative', border: '1px solid #f0f0f0' }}>
-            <span className="status-badge" style={{ position: 'absolute', top: '16px', right: '16px', background: d.status === 'PENDING' ? '#fff7e6' : '#f6ffed', color: d.status === 'PENDING' ? '#faad14' : '#52c41a', padding: '2px 10px', fontSize: '12px', borderRadius: '4px', fontWeight: 500 }}>{d.status || 'Active'}</span>
+            <span className="status-badge" style={{ 
+              position: 'absolute', 
+              top: '16px', 
+              right: '16px', 
+              background: d.status === 'REJECTED' ? '#fff1f0' : d.status === 'PENDING' ? '#fff7e6' : '#f6ffed', 
+              color: d.status === 'REJECTED' ? '#f5222d' : d.status === 'PENDING' ? '#faad14' : '#52c41a', 
+              padding: '2px 10px', 
+              fontSize: '12px', 
+              borderRadius: '4px', 
+              fontWeight: 500 
+            }}>
+              {d.status || 'Active'}
+            </span>
             <div style={{ textAlign: 'center' }}>
               <div style={{ width: '72px', height: '72px', background: '#1890ff', borderRadius: '50%', color: '#fff', fontSize: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>👩🏽‍💼</div>
               <p style={{ marginTop: '12px', fontSize: '16px', fontWeight: 500 }}>{d["1"]?.firstName || 'Adeline'} {d["1"]?.lastName || 'Ballard'}</p>
@@ -861,6 +1059,7 @@ const Dashboard = () => {
           {/* Action Footer */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', borderTop: '1px solid #f0f0f0', paddingTop: '16px' }}>
             <button 
+              onClick={() => { setActionType('REJECTED'); setShowActionModal(true); }}
               disabled={!isPending}
               style={{ 
                 background: 'transparent', 
@@ -874,6 +1073,7 @@ const Dashboard = () => {
               Reject
             </button>
             <button 
+              onClick={() => { setActionType('APPROVED'); setShowActionModal(true); }}
               disabled={!isPending}
               style={{ 
                 background: isPending ? '#52c41a' : '#f5f5f5', 
@@ -930,83 +1130,96 @@ const Dashboard = () => {
         </div>
 
         {/* Action Bar */}
-        <div className="audit-top-bar mb-24" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div className="audit-top-bar mb-24" style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
           {listReportSearchMode === 'date' ? (
-            <div className="date-range-wrapper date-range-picker" style={{ display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', padding: '8px 12px', height: '38px' }}>
-              <input 
-                type="date" 
-                value={listReportStartDate}
-                onChange={(e) => setListReportStartDate(e.target.value)}
-                onClick={(e) => e.target.showPicker && e.target.showPicker()}
-                style={{ border: 'none', outline: 'none', width: '140px', color: '#595959', fontSize: '13px', cursor: 'pointer' }} 
-              />
-              <span style={{ color: '#bfbfbf', margin: '0 8px' }}>→</span>
-              <input 
-                type="date" 
-                value={listReportEndDate}
-                onChange={(e) => setListReportEndDate(e.target.value)}
-                onClick={(e) => e.target.showPicker && e.target.showPicker()}
-                style={{ border: 'none', outline: 'none', width: '140px', color: '#595959', fontSize: '13px', cursor: 'pointer' }} 
-              />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+              <span style={{ fontSize: '11px', color: '#8c8c8c', fontWeight: 600 }}>Date Range</span>
+              <div className="date-range-wrapper date-range-picker" style={{ display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', padding: '0 12px', height: '34px' }}>
+                <input 
+                  type="date" 
+                  value={listReportStartDate}
+                  onChange={(e) => setListReportStartDate(e.target.value)}
+                  onClick={(e) => e.target.showPicker && e.target.showPicker()}
+                  style={{ border: 'none', outline: 'none', width: '130px', color: '#595959', fontSize: '13px', cursor: 'pointer', textAlign: 'center' }} 
+                />
+                <span style={{ color: '#bfbfbf', margin: '0 4px' }}>→</span>
+                <input 
+                  type="date" 
+                  value={listReportEndDate}
+                  onChange={(e) => setListReportEndDate(e.target.value)}
+                  onClick={(e) => e.target.showPicker && e.target.showPicker()}
+                  style={{ border: 'none', outline: 'none', width: '130px', color: '#595959', fontSize: '13px', cursor: 'pointer', textAlign: 'center' }} 
+                />
+              </div>
             </div>
           ) : (
-            <div className="search-input-wrapper dynamic-search" style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', display: 'flex', alignItems: 'center', padding: '8px 12px', height: '38px' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#bfbfbf" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-              <input
-                type="text"
-                placeholder="Search User Name"
-                value={listReportSearchVal}
-                onChange={(e) => setListReportSearchVal(e.target.value)}
-                style={{ width: '180px', border: 'none', outline: 'none', marginLeft: '8px', fontSize: '14px' }}
-              />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+              <span style={{ fontSize: '11px', color: '#8c8c8c', fontWeight: 600 }}>Search</span>
+              <div className="search-input-wrapper dynamic-search" style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', display: 'flex', alignItems: 'center', padding: '0 12px', height: '34px' }}>
+                <input
+                  type="text"
+                  placeholder="Search User Name"
+                  value={listReportSearchVal}
+                  onChange={(e) => setListReportSearchVal(e.target.value)}
+                  style={{ width: '180px', border: 'none', outline: 'none', fontSize: '14px', textAlign: 'center' }}
+                />
+              </div>
             </div>
           )}
 
           {/* User Type Dropdown */}
-          <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
-            <button
-              onClick={() => setShowUserTypeDropdown(!showUserTypeDropdown)}
-              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '38px', minWidth: '140px' }}
-            >
-              {listReportSelectedRole === 'ALL' ? 'ALL' : listReportSelectedRole}
-              <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="#8c8c8c" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </button>
-            {showUserTypeDropdown && (
-              <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 10, width: '160px', marginTop: '4px' }}>
-                <div onClick={() => { setListReportSelectedRole('ALL'); setShowUserTypeDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: '1px solid #f5f5f5', color: listReportSelectedRole === 'ALL' ? '#A51010' : '#262626', fontWeight: listReportSelectedRole === 'ALL' ? '600' : '400' }}>ALL Types</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+            <span style={{ fontSize: '11px', color: '#8c8c8c', fontWeight: 600 }}>Role</span>
+            <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => setShowUserTypeDropdown(!showUserTypeDropdown)}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '34px', minWidth: '140px', justifyContent: 'center' }}
+              >
+                {listReportSelectedRole === 'ALL' ? 'ALL' : listReportSelectedRole}
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="#8c8c8c" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
+              {showUserTypeDropdown && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 10, width: '160px', marginTop: '4px' }}>
+                  <div onClick={() => { setListReportSelectedRole('ALL'); setShowUserTypeDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: '1px solid #f5f5f5', color: listReportSelectedRole === 'ALL' ? '#A51010' : '#262626', fontWeight: listReportSelectedRole === 'ALL' ? '600' : '400' }}>ALL Types</div>
                 {userTypes.map((type, i) => (
                   <div key={i} onClick={() => { setListReportSelectedRole(type); setShowUserTypeDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: i < userTypes.length - 1 ? '1px solid #f5f5f5' : 'none', color: listReportSelectedRole === type ? '#A51010' : '#262626', fontWeight: listReportSelectedRole === type ? '600' : '400' }}>{type}</div>
                 ))}
               </div>
             )}
           </div>
+        </div>
 
           {/* Status Dropdown */}
-          <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
-            <button
-              onClick={() => setShowStatusDropdown(!showStatusDropdown)}
-              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '38px', minWidth: '120px' }}
-            >
-              {listReportSelectedStatus}
-              <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="#8c8c8c" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </button>
-            {showStatusDropdown && (
-              <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 101, width: '140px', marginTop: '4px' }}>
-                {statuses.map((status, i) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+            <span style={{ fontSize: '11px', color: '#8c8c8c', fontWeight: 600 }}>Status</span>
+            <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => setShowStatusDropdown(!showStatusDropdown)}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 16px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', color: '#262626', height: '34px', minWidth: '120px', justifyContent: 'center' }}
+              >
+                {listReportSelectedStatus}
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="#8c8c8c" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
+              {showStatusDropdown && (
+                <div style={{ position: 'absolute', top: '100%', left: 0, background: '#fff', border: '1px solid #f0f0f0', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 101, width: '140px', marginTop: '4px' }}>
+                  {statuses.map((status, i) => (
                   <div key={i} onClick={() => { setListReportSelectedStatus(status); setShowStatusDropdown(false); }} style={{ padding: '10px 16px', fontSize: '14px', cursor: 'pointer', borderBottom: i < statuses.length - 1 ? '1px solid #f5f5f5' : 'none', color: listReportSelectedStatus === status ? '#A51010' : '#262626', fontWeight: listReportSelectedStatus === status ? '600' : '400' }}>{status}</div>
                 ))}
               </div>
             )}
           </div>
+        </div>
 
-          {/* Search Trigger */}
-          <button
-            onClick={handleUserListReportSearch}
-            disabled={isListReportLoading}
-            style={{ padding: '0 24px', height: '38px', background: '#a80000', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '14px' }}
-          >
-            {isListReportLoading ? '...' : 'Search'}
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span style={{ fontSize: '11px', visibility: 'hidden' }}>Search</span>
+            <button
+              onClick={handleUserListReportSearch}
+              disabled={isListReportLoading}
+              style={{ padding: '0 24px', height: '34px', background: '#a80000', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '14px' }}
+            >
+              {isListReportLoading ? '...' : 'Search'}
+            </button>
+          </div>
         </div>
 
         {/* Table */}
@@ -1089,6 +1302,104 @@ const Dashboard = () => {
       </div>
     );
   };
+  const renderAdminProfile = () => {
+    const userDataStr = sessionStorage.getItem('user_data');
+    if (!userDataStr) return <div style={{ padding: '40px', textAlign: 'center' }}>User data not found.</div>;
+    
+    const data = JSON.parse(userDataStr);
+    // Extract info using the robust mapping we have
+    const ui = data.userInfo || data.user || data;
+    const fName = ui.firstName || ui.first_name || '';
+    const lName = ui.lastName || ui.last_name || '';
+    const fullName = (fName || lName) ? `${fName} ${lName}` : (ui.userName || ui.name || 'User');
+    const uRole = ui.roleName || ui.userRole || ui.role || data.role || 'Bank Admin';
+    
+    const profileItems = [
+      { label: 'User Name', value: ui.userName || ui.username || '---', icon: '👤' },
+      { label: 'Full Name', value: fullName, icon: '📝' },
+      { label: 'Mobile Number', value: ui.mobileNumber || ui.mobile_number || '---', icon: '📞' },
+      { label: 'Email ID', value: ui.email || ui.emailId || '---', icon: '✉️' },
+      { label: 'Role', value: uRole, icon: '🛡️' },
+      { label: 'Parent Name', value: ui.parentName || 'NSDL Payments Bank', icon: '🏢' },
+      { label: 'Account Status', value: ui.status || 'ACTIVE', icon: '⚡' },
+      { label: 'Last Login', value: new Date(parseInt(sessionStorage.getItem('login_timestamp'))).toLocaleString(), icon: '🕒' }
+    ];
+
+    return (
+      <div className="profile-view-container" style={{ padding: '24px', animation: 'fadeIn 0.4s ease-out' }}>
+        <div className="profile-header-card" style={{ 
+          background: 'linear-gradient(135deg, #A51010 0%, #700203 100%)', 
+          borderRadius: '12px', 
+          padding: '40px', 
+          color: '#fff', 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '30px',
+          marginBottom: '30px',
+          boxShadow: '0 10px 30px rgba(165, 16, 16, 0.2)'
+        }}>
+          <div className="profile-avatar-large" style={{ 
+            width: '100px', 
+            height: '100px', 
+            borderRadius: '50%', 
+            background: 'rgba(255,255,255,0.2)', 
+            border: '4px solid rgba(255,255,255,0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '40px',
+            fontWeight: 700,
+            overflow: 'hidden'
+          }}>
+            {sessionAvatar ? (
+               <img src={sessionAvatar} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : fullName.charAt(0).toUpperCase()}
+          </div>
+          <div>
+            <h1 style={{ margin: 0, fontSize: '32px', fontWeight: 700 }}>{fullName}</h1>
+            <p style={{ margin: '8px 0 0', fontSize: '16px', opacity: 0.9, display: 'flex', alignItems: 'center', gap: '8px' }}>
+               <span style={{ padding: '4px 12px', background: 'rgba(255,255,255,0.2)', borderRadius: '20px', fontSize: '13px', fontWeight: 600 }}>{uRole}</span>
+               • {ui.userName || ui.username}
+            </p>
+          </div>
+        </div>
+
+        <div className="profile-info-grid" style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', 
+          gap: '20px' 
+        }}>
+          {profileItems.map((item, i) => (
+            <div key={i} className="info-card" style={{ 
+              background: '#fff', 
+              padding: '24px', 
+              borderRadius: '12px', 
+              border: '1px solid #f0f0f0',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '16px',
+              transition: 'transform 0.2s, box-shadow 0.2s',
+              cursor: 'default'
+            }}>
+              <div style={{ fontSize: '24px', width: '48px', height: '48px', background: '#fef2f2', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {item.icon}
+              </div>
+              <div>
+                <p style={{ margin: 0, fontSize: '12px', color: '#8c8c8c', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>{item.label}</p>
+                <p style={{ margin: '4px 0 0', fontSize: '15px', color: '#262626', fontWeight: 500 }}>{item.value}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: '30px', padding: '24px', background: '#fff9f9', border: '1px dashed #feb2b2', borderRadius: '12px', textAlign: 'center' }}>
+           <p style={{ margin: 0, color: '#c53030', fontSize: '13px' }}>
+             Account Security: Your details are encrypted. If you notice any unauthorized changes, please contact the System Administrator immediately.
+           </p>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="dashboard-container">
@@ -1166,11 +1477,18 @@ const Dashboard = () => {
               )}
             </div>
             <div className="profile-section" onClick={(e) => { e.stopPropagation(); setShowProfileMenu(!showProfileMenu); }} style={{ position: 'relative' }}>
-              <div className="avatar" style={{ background: '#ffeef0', color: '#a80000' }}>{userName.charAt(0).toUpperCase()}</div>
+              <div className="avatar" style={{ background: '#ffeef0', color: '#a80000', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {sessionAvatar ? (
+                  <img src={sessionAvatar} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  userName.charAt(0).toUpperCase()
+                )}
+              </div>
               <span className="user-name" style={{ fontWeight: 500 }}>{userName}</span>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#595959" strokeWidth="2" style={{ marginLeft: '4px' }}><polyline points="6 9 12 15 18 9"></polyline></svg>
               {showProfileMenu && (
                 <div className="dropdown-menu">
+                  <div className="dropdown-item" onClick={() => { setActiveMenu('admin-profile'); setShowProfileMenu(false); }}>Profile</div>
                   <div className="dropdown-item">Change Password</div>
                   <div className="dropdown-item" onClick={() => setShowLogoutModal(true)}>Logout</div>
                 </div>
@@ -1184,6 +1502,7 @@ const Dashboard = () => {
           {activeMenu === 'user-list-report' && renderUserListReport()}
           {activeMenu === 'user-request' && renderUserRequest()}
           {activeMenu === 'audit-trail' && renderAuditTrail()} 
+          {activeMenu === 'admin-profile' && renderAdminProfile()}
           {activeMenu === 'profile' && renderProfile()}
         </main>
       </div>
@@ -1196,6 +1515,135 @@ const Dashboard = () => {
             <div style={{ display: 'flex', gap: '12px' }}>
               <button onClick={() => setShowLogoutModal(false)} style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #d9d9d9', cursor: 'pointer' }}>Cancel</button>
               <button onClick={handleLogout} style={{ flex: 1, padding: '10px', borderRadius: '6px', border: 'none', background: '#A51010', color: '#fff', cursor: 'pointer' }}>Okay</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Profile Action Modal (Approve/Reject) */}
+      {showActionModal && (
+        <div className="nsdl-modal-overlay">
+          <div className="nsdl-modal" style={{ width: '420px' }}>
+            <div className="nsdl-modal-header" style={{ color: actionType === 'APPROVED' ? '#4caf50' : '#f44336' }}>
+              {actionType === 'APPROVED' ? 'Approve User' : 'Reject User'}
+            </div>
+            
+            <div className="nsdl-modal-body">
+              <p style={{ fontSize: '14px', color: '#595959', marginBottom: '20px' }}>
+                Please provide the remarks for this {actionType === 'APPROVED' ? 'approval' : 'rejection'}.
+              </p>
+              
+              <div className="form-field" style={{ width: '100%', marginBottom: actionDescriptionError ? '4px' : '20px' }}>
+                <label style={{ display: 'block', fontSize: '13px', color: '#8c8c8c', marginBottom: '8px' }}>Description*</label>
+                <textarea 
+                  value={actionDescription}
+                  onChange={(e) => { setActionDescription(e.target.value); if(actionDescriptionError) setActionDescriptionError(''); }}
+                  onBlur={() => { if(!actionDescription.trim()) setActionDescriptionError('Description is required.'); }}
+                  placeholder="Enter description"
+                  style={{ 
+                    width: '100%', 
+                    height: '80px', 
+                    padding: '10px', 
+                    borderRadius: '4px', 
+                    border: `1px solid ${actionDescriptionError ? '#d32f2f' : '#d9d9d9'}`, 
+                    outline: 'none', 
+                    resize: 'none', 
+                    fontSize: '14px',
+                    fontFamily: 'inherit'
+                  }}
+                />
+              </div>
+              {actionDescriptionError && <div style={{ color: '#d32f2f', fontSize: '12px', marginBottom: '16px', textAlign: 'left' }}>{actionDescriptionError}</div>}
+
+              <div className="form-field" style={{ width: '100%', marginBottom: actionCommentsError ? '4px' : '0' }}>
+                <label style={{ display: 'block', fontSize: '13px', color: '#8c8c8c', marginBottom: '8px' }}>Comments*</label>
+                <input 
+                  type="text"
+                  value={actionComments}
+                  onChange={(e) => { setActionComments(e.target.value); if(actionCommentsError) setActionCommentsError(''); }}
+                  onBlur={() => { if(!actionComments.trim()) setActionCommentsError('Comments is required.'); }}
+                  placeholder="Enter comments"
+                  style={{ 
+                    width: '100%', 
+                    padding: '10px', 
+                    borderRadius: '4px', 
+                    border: `1px solid ${actionCommentsError ? '#d32f2f' : '#d9d9d9'}`, 
+                    outline: 'none', 
+                    fontSize: '14px' 
+                  }}
+                />
+              </div>
+              {actionCommentsError && <div style={{ color: '#d32f2f', fontSize: '12px', textAlign: 'left' }}>{actionCommentsError}</div>}
+            </div>
+
+            <div className="nsdl-modal-footer">
+              <button 
+                onClick={() => { 
+                  setShowActionModal(false); 
+                  setActionComments(''); 
+                  setActionDescription(''); 
+                  setActionCommentsError('');
+                  setActionDescriptionError('');
+                }}
+                style={{ color: '#8c8c8c', textTransform: 'none' }}
+                disabled={isActionProcessing}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleActionSubmit}
+                style={{ color: actionType === 'APPROVED' ? '#4caf50' : '#A51010', fontWeight: '700' }}
+                disabled={isActionProcessing}
+              >
+                {isActionProcessing ? 'PROCESSING...' : 'SUBMIT'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Status Notification Modal */}
+      {statusModal.show && (
+        <div className="nsdl-modal-overlay">
+          <div className={`nsdl-modal ${statusModal.type}`}>
+            <div className="nsdl-modal-header">{statusModal.title}</div>
+            <div className="nsdl-modal-body">{statusModal.message}</div>
+            <div className="nsdl-modal-footer">
+              <button onClick={() => setStatusModal({ ...statusModal, show: false })}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Session Expiry Warning Modal */}
+      {showSessionModal && (
+        <div className="nsdl-modal-overlay" style={{ zIndex: 20000 }}>
+          <div className="nsdl-modal" style={{ width: '420px' }}>
+            <div className="nsdl-modal-header" style={{ color: '#faad14' }}>Session Expiry Warning</div>
+            <div className="nsdl-modal-body" style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}>⏳</div>
+              <p style={{ fontWeight: 600, fontSize: '16px', color: '#262626', marginBottom: '8px' }}>
+                The session you have logged in is going to over.
+              </p>
+              <p style={{ fontSize: '14px', color: '#8c8c8c' }}>
+                For your security, sessions time out after 20 minutes of inactivity. Do you want to continue the session?
+              </p>
+            </div>
+            <div className="nsdl-modal-footer" style={{ gap: '12px' }}>
+              <button 
+                onClick={handleLogout} 
+                style={{ color: '#a51010', flex: 1, border: '1px solid #f0f0f0', borderRadius: '4px' }}
+                disabled={isRefreshing}
+              >
+                LOGOUT
+              </button>
+              <button 
+                onClick={handleSessionContinue} 
+                style={{ color: '#fff', background: '#a51010', flex: 1, borderRadius: '4px', textTransform: 'uppercase' }}
+                disabled={isRefreshing}
+              >
+                {isRefreshing ? 'PLEASE WAIT...' : 'CONTINUE'}
+              </button>
             </div>
           </div>
         </div>

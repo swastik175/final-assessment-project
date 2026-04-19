@@ -8,66 +8,11 @@ const LOGIN_URL = `${BASE_URL}/user-authorization/user/login`;
 const BASIC_AUTH_TOKEN = 'bnNkbGFiLWludGVybmFsLWNsaWVudDpuc2RsYWItaW50ZXJuYWwtcGFzc3dvcmQ=';
 const FIXED_KEY = 'a6T8tOCYiSzDTrcqPvCbJfy0wSQOVcfaevH0gtwCtoU=';
 
+// Removed Global 401 Interceptor as per USER request. Refresh token flow will handle session continuity.
 const api = axios.create();
 
-// Configure Axios interceptor to aggressively defend against expired/invalid tokens globally
-api.interceptors.response.use(
-  (response) => {
-    // If the server returns a 200 but the body contains unauthorized info
-    const respData = response.data;
-    if (respData) {
-      const isUnauthInBody =
-        respData.status_code == 401 ||
-        respData.status == 401 ||
-        respData.statusCode == 401 ||
-        (respData.message && typeof respData.message === 'string' &&
-          (respData.message.includes('401') || respData.message.toLowerCase().includes('unauthorized') || respData.message.toLowerCase().includes('expired')));
-
-      if (isUnauthInBody) {
-        console.warn("⚠️ UNAUTHORIZED DETECTED IN RESPONSE BODY:", respData);
-        handleUnauthorized();
-        return Promise.reject(new Error("Unauthorized response body"));
-      }
-    }
-    return response;
-  },
-  (error) => {
-    console.group("❌ API ERROR INTERCEPTED");
-    console.error("URL:", error.config?.url);
-    console.error("Status:", error.response?.status);
-    console.error("Message:", error.message);
-    console.groupEnd();
-
-    // Standard HTTP Status Code handling (401 or 403)
-    const status = error.response?.status;
-    if (status == 401 || status == 403) {
-      handleUnauthorized();
-    } else if (error.message && (error.message.includes('401') || error.message.includes('403'))) {
-      handleUnauthorized();
-    }
-
-    return Promise.reject(error);
-  }
-);
-
-function handleUnauthorized() {
-  console.error("🔒 SECURITY TRIGGER: Session invalid or expired. Purging state and redirecting.");
-
-  // Nuke everything
-  sessionStorage.clear();
-  localStorage.clear();
-
-  // Force a hard jump to the login page (root) to kill all component state
-  const loginUrl = window.location.origin + '/';
-  window.location.replace(loginUrl);
-
-  // Fallback if replace is intercepted
-  setTimeout(() => {
-    window.location.href = loginUrl;
-  }, 100);
-}
-
 /**
+ * Get base64-encoded geolocation string for the Geo-Location header.
  * Get base64-encoded geolocation string for the Geo-Location header.
  * @returns {Promise<string>} Base64-encoded location JSON
  */
@@ -127,6 +72,37 @@ export async function loginUser(username, password) {
     return decryptResponse(response.data.ResponseData);
   }
 
+  return response.data;
+}
+
+/**
+ * Refresh the session token.
+ * @param {string} refreshTokenVal
+ * @returns {Promise<Object>} Decrypted response data
+ */
+export async function refreshToken(refreshTokenVal) {
+  const payload = {
+    grant_type: 'refresh_token',
+    refresh_token: refreshTokenVal
+  };
+
+  const encryptedRequest = encryptPayload(payload);
+  const locationHeader = await getGeoLocation();
+
+  // Using raw axios to avoid global interceptors that might trigger redirect before we handle the error
+  const response = await axios.post(LOGIN_URL, {
+    RequestData: encryptedRequest
+  }, {
+    headers: {
+      'Authorization': `Basic ${BASIC_AUTH_TOKEN}`,
+      'Content-Type': 'application/json',
+      'Geo-Location': locationHeader
+    }
+  });
+
+  if (response.data && response.data.ResponseData) {
+    return decryptResponse(response.data.ResponseData);
+  }
   return response.data;
 }
 
@@ -264,4 +240,106 @@ export async function logoutUser(token) {
   } catch (error) {
     console.error('Logout API failed:', error);
   }
+}
+
+/**
+ * Send OTP for forgot password flow
+ * @param {string} username 
+ */
+export async function sendForgotPasswordOtp(username) {
+  const URL = `https://services-encr.iserveu.online/dev/nsdlab-internal/user-mgmt/utility/send-forgot-password-otp?userName=${username}`;
+  
+  const payload = {
+    userName: username
+  };
+
+  const encryptedPayload = encryptPayload(payload);
+
+  const response = await api.post(
+    URL,
+    { RequestData: encryptedPayload },
+    {
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  if (response.data && response.data.ResponseData) {
+    return decryptResponse(response.data.ResponseData);
+  }
+
+  return response.data;
+}
+
+/**
+ * Verify OTP and send temporary password
+ * @param {string} username 
+ * @param {string} otp 
+ */
+export async function verifyForgotPasswordOtp(username, otp) {
+  const URL = `https://services-encr.iserveu.online/dev/nsdlab-internal/user-mgmt/utility/verify-otp-send-temporary-password`;
+  
+  const payload = {
+    userName: username,
+    otp: otp
+  };
+
+  const encryptedPayload = encryptPayload(payload);
+
+  const response = await api.post(
+    URL,
+    { RequestData: encryptedPayload },
+    {
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  if (response.data && response.data.ResponseData) {
+    return decryptResponse(response.data.ResponseData);
+  }
+
+  return response.data;
+}
+
+/**
+ * Update CBC User Status (Approve/Reject)
+ * @param {string} token - Logged in access_token
+ * @param {object} data - { status, remarks: { comments, description }, username }
+ */
+export async function updateCbcStatus(token, data) {
+  const URL = "https://apidev-sdk.iserveu.online/NSDL/user_onboarding_report/cbc-status-update";
+  
+  const payload = {
+    status: data.status,
+    remarks: {
+      comments: data.remarks.comments,
+      description: data.remarks.description
+    },
+    token: token,
+    username: data.username
+  };
+
+  const encryptedPayload = encryptPayload(payload);
+
+  const response = await api.post(
+    URL,
+    { RequestData: encryptedPayload },
+    {
+      headers: {
+        'Authorization': token,
+        'key': 'a6T8tOCYiSzDTrcqPvCbJfy0wSQOVcfaevH0gtwCtoU=',
+        'pass_key': 'QC62FQKXT2DQTO43LMWH5A44UKVPQ7LK5Y6HVHRQ3XTIKLDTB6HA',
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  if (response.data && response.data.ResponseData) {
+    return decryptResponse(response.data.ResponseData);
+  }
+
+  return response.data;
 }

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { loginUser } from '../services/authService';
+import { loginUser, sendForgotPasswordOtp, verifyForgotPasswordOtp } from '../services/authService';
 
 const LoginForm = ({ onLoginSuccess }) => {
   const [showPassword, setShowPassword] = useState(false);
@@ -16,6 +16,16 @@ const LoginForm = ({ onLoginSuccess }) => {
   const [cpForm, setCpForm] = useState({ oldPwd: '', newPwd: '', confirmPwd: '' });
   const [showCpPwd, setShowCpPwd] = useState({ old: false, new: false, confirm: false });
   const [cpError, setCpError] = useState('');
+  
+  // Forgot Password State
+  const [isForgotPwd, setIsForgotPwd] = useState(false);
+  const [forgotUsername, setForgotUsername] = useState('');
+  const [forgotUsernameError, setForgotUsernameError] = useState('');
+  
+  // Verify OTP State
+  const [showOtpVerify, setShowOtpVerify] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [otpError, setOtpError] = useState('');
 
   const validatePassword = (val) => {
     // NSDL Rules: Uppercase, lowercase, number, special char, 8-16 chars
@@ -91,7 +101,7 @@ const LoginForm = ({ onLoginSuccess }) => {
         setModal({
           show: true,
           title: 'SUCCESS',
-          message: 'Congratulations!!! Login Successfull',
+          message: 'Logged in Successfully, Please click on okay to proceed',
           type: 'success'
         });
       } else {
@@ -158,6 +168,83 @@ const LoginForm = ({ onLoginSuccess }) => {
     }, 1000);
   };
 
+  const handleForgotSubmit = async (e) => {
+    e.preventDefault();
+    if (!forgotUsername.trim()) {
+      setForgotUsernameError('Username is required.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const resp = await sendForgotPasswordOtp(forgotUsername);
+      console.log('Forgot Pwd Response:', resp);
+      
+      setModal({
+        show: true,
+        title: resp?.statusCode == 200 || resp?.status == 'SUCCESS' ? 'SUCCESS' : 'FAILED',
+        message: resp?.statusDesc || resp?.message || 'Operation processed.',
+        type: resp?.statusCode == 200 || resp?.status == 'SUCCESS' ? 'success' : 'error'
+      });
+
+      if (resp?.statusCode == 200 || resp?.status == 'SUCCESS') {
+        setIsForgotPwd(false);
+        setShowOtpVerify(true);
+      }
+    } catch (error) {
+       console.error('Forgot password fail:', error);
+       setModal({
+         show: true,
+         title: 'FAILED',
+         message: error.response?.data?.message || 'Something went wrong, please try again!',
+         type: 'error'
+       });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleOtpVerifySubmit = async (e) => {
+    e.preventDefault();
+    if (!otp.trim()) {
+      setOtpError('OTP is required.');
+      return;
+    }
+    if (otp.length < 4) {
+      setOtpError('Please enter a valid OTP.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const resp = await verifyForgotPasswordOtp(forgotUsername, otp);
+      console.log('OTP Verify Response:', resp);
+
+      setModal({
+        show: true,
+        title: resp?.statusCode == 200 || resp?.status == 'SUCCESS' ? 'SUCCESS' : 'FAILED',
+        message: resp?.statusDesc || resp?.message || 'Operation completed.',
+        type: resp?.statusCode == 200 || resp?.status == 'SUCCESS' ? 'success' : 'error'
+      });
+
+      if (resp?.statusCode == 200 || resp?.status == 'SUCCESS') {
+        setShowOtpVerify(false);
+        setForgotUsername('');
+        setOtp('');
+      }
+    } catch (error) {
+      console.error('OTP Verify fail:', error);
+      setModal({
+        show: true,
+        title: 'FAILED',
+        message: error.response?.data?.message || 'OTP verification failed. Please try again!',
+        type: 'error'
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleModalClose = () => {
     const isSuccess = modal.type === 'success';
     setModal({ show: false, title: '', message: '', type: '' });
@@ -190,58 +277,121 @@ const LoginForm = ({ onLoginSuccess }) => {
         <h3>Welcome Back!</h3>
         <p>Please enter your details</p>
 
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="form-field" style={{ marginBottom: usernameError ? '4px' : '16px' }}>
-            <input
-              type="text"
-              placeholder="Username*"
-              value={username}
-              onChange={e => { setUsername(e.target.value); if(usernameError) setUsernameError(''); }}
-              onBlur={() => { if (!username.trim()) setUsernameError('Username is required.'); }}
-              disabled={isLoading || showChangePwd}
-              style={{ borderColor: usernameError ? '#d32f2f' : '#d9d9d9' }}
-            />
+        {isForgotPwd ? (
+          <div className="forgot-password-view">
+            <h3>Forgot Password</h3>
+            <p>Please enter your username to reset password</p>
+            <form onSubmit={handleForgotSubmit} noValidate>
+              <div className="form-field" style={{ marginBottom: forgotUsernameError ? '4px' : '24px' }}>
+                <input
+                  type="text"
+                  placeholder="Username*"
+                  value={forgotUsername}
+                  onChange={e => { setForgotUsername(e.target.value); if(forgotUsernameError) setForgotUsernameError(''); }}
+                  onBlur={() => { if (!forgotUsername.trim()) setForgotUsernameError('Username is required.'); }}
+                  disabled={isLoading}
+                  style={{ borderColor: forgotUsernameError ? '#d32f2f' : '#d9d9d9' }}
+                />
+              </div>
+              {forgotUsernameError && <div style={{ color: '#d32f2f', fontSize: '12px', marginBottom: '16px', textAlign: 'left', paddingLeft: '4px' }}>{forgotUsernameError}</div>}
+              
+              <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
+                <button type="button" className="login_btn" onClick={() => { setIsForgotPwd(false); setForgotUsername(''); setForgotUsernameError(''); }} style={{ background: '#f5f5f5', color: '#595959', border: '1px solid #d9d9d9' }} disabled={isLoading}>
+                  Cancel
+                </button>
+                <button type="submit" className="login_btn" disabled={isLoading}>
+                  Submit
+                </button>
+              </div>
+            </form>
           </div>
-          {usernameError && <div style={{ color: '#d32f2f', fontSize: '12px', marginBottom: '12px', textAlign: 'left', paddingLeft: '4px' }}>{usernameError}</div>}
+        ) : showOtpVerify ? (
+          <div className="forgot-password-view">
+             <h3>Verify OTP</h3>
+             <p>Enter the 6-digit OTP sent to your mobile number</p>
+             <form onSubmit={handleOtpVerifySubmit} noValidate>
+              <div className="form-field" style={{ marginBottom: otpError ? '4px' : '24px' }}>
+                <input
+                  type="text"
+                  placeholder="Enter OTP*"
+                  maxLength={6}
+                  value={otp}
+                  onChange={e => { 
+                    const val = e.target.value.replace(/\D/g, '');
+                    setOtp(val); 
+                    if(otpError) setOtpError(''); 
+                  }}
+                  onBlur={() => { if (!otp.trim()) setOtpError('OTP is required.'); }}
+                  disabled={isLoading}
+                  style={{ borderColor: otpError ? '#d32f2f' : '#d9d9d9' }}
+                />
+              </div>
+              {otpError && <div style={{ color: '#d32f2f', fontSize: '12px', marginBottom: '16px', textAlign: 'left', paddingLeft: '4px' }}>{otpError}</div>}
+              
+              <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
+                <button type="button" className="login_btn" onClick={() => { setShowOtpVerify(false); setOtp(''); setOtpError(''); setForgotUsername(''); }} style={{ background: '#f5f5f5', color: '#595959', border: '1px solid #d9d9d9' }} disabled={isLoading}>
+                  Cancel
+                </button>
+                <button type="submit" className="login_btn" disabled={isLoading}>
+                  Verify OTP
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} noValidate>
+            <div className="form-field" style={{ marginBottom: usernameError ? '4px' : '16px' }}>
+              <input
+                type="text"
+                placeholder="Username*"
+                value={username}
+                onChange={e => { setUsername(e.target.value); if(usernameError) setUsernameError(''); }}
+                onBlur={() => { if (!username.trim()) setUsernameError('Username is required.'); }}
+                disabled={isLoading || showChangePwd}
+                style={{ borderColor: usernameError ? '#d32f2f' : '#d9d9d9' }}
+              />
+            </div>
+            {usernameError && <div style={{ color: '#d32f2f', fontSize: '12px', marginBottom: '12px', textAlign: 'left', paddingLeft: '4px' }}>{usernameError}</div>}
 
-          <div className="form-field" style={{ marginBottom: passwordError ? '4px' : '16px' }}>
-            <input
-              type={showPassword ? 'text' : 'password'}
-              placeholder="Password*"
-              value={password}
-              onChange={e => { setPassword(e.target.value); if(passwordError) setPasswordError(''); }}
-              onBlur={() => { if (!password) setPasswordError('Password is required.'); }}
-              disabled={isLoading || showChangePwd}
-              style={{ borderColor: passwordError ? '#d32f2f' : '#d9d9d9' }}
-            />
-            <button
-              type="button"
-              className="pwd-toggle"
-              onClick={() => setShowPassword(p => !p)}
-              disabled={isLoading || showChangePwd}
-            >
-              {showPassword ? (
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
-              ) : (
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
-              )}
+            <div className="form-field" style={{ marginBottom: passwordError ? '4px' : '16px' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Password*"
+                value={password}
+                onChange={e => { setPassword(e.target.value); if(passwordError) setPasswordError(''); }}
+                onBlur={() => { if (!password) setPasswordError('Password is required.'); }}
+                disabled={isLoading || showChangePwd}
+                style={{ borderColor: passwordError ? '#d32f2f' : '#d9d9d9' }}
+              />
+              <button
+                type="button"
+                className="pwd-toggle"
+                onClick={() => setShowPassword(p => !p)}
+                disabled={isLoading || showChangePwd}
+              >
+                {showPassword ? (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                )}
+              </button>
+            </div>
+            {passwordError && <div style={{ color: '#d32f2f', fontSize: '12px', marginBottom: '12px', textAlign: 'left', paddingLeft: '4px' }}>{passwordError}</div>}
+
+            {pwdError && <div className="field-error-msg">{pwdError}</div>}
+
+            <div className="form-options-row">
+              <label className="remember_me_text">
+                <input type="checkbox" disabled={isLoading || showChangePwd} /> Remember me
+              </label>
+              <a href="#" className="forgot-password-link" onClick={(e) => { e.preventDefault(); setIsForgotPwd(true); }}>Forgot Password?</a>
+            </div>
+
+            <button type="submit" className="login_btn" disabled={isLoading || showChangePwd}>
+              Login
             </button>
-          </div>
-          {passwordError && <div style={{ color: '#d32f2f', fontSize: '12px', marginBottom: '12px', textAlign: 'left', paddingLeft: '4px' }}>{passwordError}</div>}
-
-          {pwdError && <div className="field-error-msg">{pwdError}</div>}
-
-          <div className="form-options-row">
-            <label className="remember_me_text">
-              <input type="checkbox" disabled={isLoading || showChangePwd} /> Remember me
-            </label>
-            <a href="#" className="forgot-password-link">Forgot Password?</a>
-          </div>
-
-          <button type="submit" className="login_btn" disabled={isLoading || showChangePwd}>
-            Login
-          </button>
-        </form>
+          </form>
+        )}
 
         {/* Change Password Modal (High Fidelity) */}
         {showChangePwd && (

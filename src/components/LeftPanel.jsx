@@ -1,21 +1,23 @@
 import React from 'react';
-import nsdlLogo from '../assets/nsdl_logo.png';
-import leftBankImg from '../assets/nsdl_watermark.png';
+import bankLogo from '../assets/bank.png';
+import leftWatermark from '../assets/nsdl_watermark.png';
 
 const LeftPanel = () => {
   return (
     <div className="login-left-container">
-      <img
-        src={nsdlLogo}
-        alt="NSDL Payments Bank"
-        className="nsdl-logo"
-      />
-      <div className="left-bank-box">
+      <div className="nsdl-brand-stack">
         <img
-          src={leftBankImg}
-          alt="NSDL Bank"
-          className="back-logo"
+          src={bankLogo}
+          alt="NSDL Payments Bank"
+          className="nsdl-logo"
         />
+        <div className="left-bank-box">
+          <img
+            src={leftWatermark}
+            alt="NSDL Bank"
+            className="back-logo"
+          />
+        </div>
       </div>
     </div>
   );

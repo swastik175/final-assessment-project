@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './Dashboard.css';
-import { getUserDashboard, getAuditTrail, getUserListReport, getUserListByDateRange, logoutUser, updateCbcStatus, refreshToken } from '../services/authService';
+import { getUserDashboard, getAuditTrail, getUserListReport, getUserListByDateRange, logoutUser, updateCbcStatus, refreshToken, sendChangePasswordOtp, updatePasswordUsingOldPassword } from '../services/authService';
 import nsdlLogo from '../assets/nsdl_logo.png';
 
 const Dashboard = () => {
@@ -115,6 +115,30 @@ const Dashboard = () => {
   const [auditTableData, setAuditTableData] = useState(defaultAuditTrail);
   const [isAuditTableLoading, setIsAuditTableLoading] = useState(false);
   const [hasSearchedAudit, setHasSearchedAudit] = useState(false);
+
+  // Change Password Modal State
+  const [showChangePwdModal, setShowChangePwdModal] = useState(false);
+  const [pwdFormData, setPwdFormData] = useState({ oldPassword: '', newPassword: '' });
+  const [isPwdProcessing, setIsPwdProcessing] = useState(false);
+  const [pwdFormErrors, setPwdFormErrors] = useState({ oldPassword: '', newPassword: '' });
+  const [showOldPassword, setShowOldPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [pwdModalError, setPwdModalError] = useState('');
+  
+  // OTP Verification State
+  const [showPwdOtpModal, setShowPwdOtpModal] = useState(false);
+  const [pwdOtpValue, setPwdOtpValue] = useState('');
+  const [pwdOtpError, setPwdOtpError] = useState('');
+  const [isPwdOtpProcessing, setIsPwdOtpProcessing] = useState(false);
+  const [toasts, setToasts] = useState([]);
+
+  const addToast = (message, type = 'success') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 5000);
+  };
 
   // Create CBC User Form State
   const [cbcFormStep, setCbcFormStep] = useState(1);
@@ -275,6 +299,79 @@ const Dashboard = () => {
     }
   };
 
+  const handleChangePasswordSubmit = async (e) => {
+    e.preventDefault();
+    setPwdModalError('');
+    let hasError = false;
+    const errors = { oldPassword: '', newPassword: '' };
+
+    if (!pwdFormData.oldPassword.trim()) {
+      errors.oldPassword = 'Old password is required.';
+      hasError = true;
+    }
+    if (!pwdFormData.newPassword.trim()) {
+      errors.newPassword = 'New password is required.';
+      hasError = true;
+    }
+    
+    if (hasError) {
+      setPwdFormErrors(errors);
+      return;
+    }
+
+    setIsPwdProcessing(true);
+    const token = sessionStorage.getItem('access_token');
+
+    try {
+      const resp = await sendChangePasswordOtp(token, pwdFormData);
+      if (resp?.statusCode == 200 || resp?.status == 'SUCCESS') {
+        addToast(resp?.statusDesc || 'OTP has been sent to your registered mobile number.');
+        setShowChangePwdModal(false);
+        setShowPwdOtpModal(true);
+        setPwdModalError('');
+      } else {
+        setPwdModalError(resp?.statusDesc || resp?.message || 'Operation failed. Please check your credentials.');
+      }
+    } catch (error) {
+      console.error('Change password failed:', error);
+      const errorMsg = error.response?.data?.statusDesc || error.response?.data?.message || error.message || 'Server error occurred. Please try again later.';
+      setPwdModalError(errorMsg);
+    } finally {
+      setIsPwdProcessing(false);
+    }
+  };
+
+  const handleVerifyPasswordOtpSubmit = async (e) => {
+    e.preventDefault();
+    if (!pwdOtpValue.trim()) {
+      setPwdOtpError('OTP is required.');
+      return;
+    }
+    setPwdOtpError('');
+    setIsPwdOtpProcessing(true);
+    const token = sessionStorage.getItem('access_token');
+
+    try {
+      const payload = { ...pwdFormData, otp: pwdOtpValue };
+      const resp = await updatePasswordUsingOldPassword(token, payload);
+      if (resp?.statusCode == 200 || resp?.status == 'SUCCESS') {
+        addToast(resp?.statusDesc || 'Your password has been updated successfully!');
+        setShowPwdOtpModal(false);
+        setPwdFormData({ oldPassword: '', newPassword: '' });
+        setPwdOtpValue('');
+        setPwdModalError('');
+      } else {
+        setPwdOtpError(resp?.statusDesc || resp?.message || 'Invalid OTP. Please try again.');
+      }
+    } catch (error) {
+      console.error('OTP Verification failed:', error);
+      const errorMsg = error.response?.data?.statusDesc || error.response?.data?.message || error.message || 'Verification failed. Please check the OTP.';
+      setPwdOtpError(errorMsg);
+    } finally {
+      setIsPwdOtpProcessing(false);
+    }
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       const token = sessionStorage.getItem('access_token');
@@ -316,6 +413,7 @@ const Dashboard = () => {
 
   const [showSessionModal, setShowSessionModal] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showCbcSuccessModal, setShowCbcSuccessModal] = useState(false);
   const [sessionKey, setSessionKey] = useState(0);
 
   useEffect(() => {
@@ -1811,7 +1909,7 @@ const Dashboard = () => {
           <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '24px', marginTop: '40px' }}>
             <span onClick={() => setCbcFormStep(1)} style={{ color: '#A51010', cursor: 'pointer', fontSize: '15px' }}>Cancel</span>
             <button 
-              onClick={() => setStatusModal({ show: true, type: 'success', title: 'Success', message: 'CBC User data submitted successfully!' })} 
+              onClick={() => setShowCbcSuccessModal(true)} 
               style={{ background: '#A51010', color: '#fff', padding: '10px 48px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontWeight: 600 }}
             >
               Save
@@ -1943,7 +2041,7 @@ const Dashboard = () => {
               {showProfileMenu && (
                 <div className="dropdown-menu">
                   <div className="dropdown-item" onClick={() => { setActiveMenu('admin-profile'); setShowProfileMenu(false); }}>Profile</div>
-                  <div className="dropdown-item">Change Password</div>
+                  <div className="dropdown-item" onClick={() => { setShowChangePwdModal(true); setShowProfileMenu(false); }}>Change Password</div>
                   <div className="dropdown-item" onClick={() => setShowLogoutModal(true)}>Logout</div>
                 </div>
               )}
@@ -2070,6 +2168,64 @@ const Dashboard = () => {
         </div>
       )}
 
+      {/* CBC User Success Modal (Image Replica) */}
+      {showCbcSuccessModal && (
+        <div className="nsdl-modal-overlay" style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)' }}>
+          <div className="cbc-success-modal" style={{ 
+            background: '#fff', 
+            width: '450px', 
+            borderRadius: '12px', 
+            padding: '32px', 
+            textAlign: 'center', 
+            boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
+            animation: 'nsdlModalFade 0.3s ease-out',
+            border: '1px solid #f0f0f0'
+          }}>
+            <div style={{ marginBottom: '32px' }}>
+              <img src={nsdlLogo} alt="NSDL" style={{ height: '36px', objectFit: 'contain' }} />
+            </div>
+            
+            <div style={{ 
+              width: '120px', 
+              height: '120px', 
+              background: '#52c41a', 
+              borderRadius: '50%', 
+              margin: '0 auto 24px', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              boxShadow: '0 8px 16px rgba(82, 196, 26, 0.2)'
+            }}>
+              <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+
+            <h3 style={{ fontSize: '20px', fontWeight: 600, color: '#262626', marginBottom: '32px' }}>
+              User Created Successfully!
+            </h3>
+
+            <button 
+              onClick={() => { setShowCbcSuccessModal(false); setActiveMenu('dashboard'); }}
+              style={{ 
+                width: '100%', 
+                padding: '12px', 
+                background: '#52c41a', 
+                color: '#fff', 
+                border: 'none', 
+                borderRadius: '6px', 
+                fontSize: '16px', 
+                fontWeight: 600, 
+                cursor: 'pointer',
+                transition: 'background 0.2s'
+              }}
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Session Expiry Warning Modal */}
       {showSessionModal && (
         <div className="nsdl-modal-overlay" style={{ zIndex: 20000 }}>
@@ -2103,6 +2259,200 @@ const Dashboard = () => {
           </div>
         </div>
       )}
+
+      {/* Change Password Modal */}
+      {showChangePwdModal && (
+        <div className="nsdl-modal-overlay" style={{ zIndex: 15000 }}>
+          <div className="nsdl-modal" style={{ width: '400px' }}>
+            <div className="nsdl-modal-header">Change Password</div>
+            <form onSubmit={handleChangePasswordSubmit}>
+              <div className="nsdl-modal-body" style={{ textAlign: 'left', padding: '24px 32px' }}>
+                {pwdModalError && (
+                  <div style={{ background: '#fff1f0', border: '1px solid #ffa39e', color: '#f5222d', padding: '10px 14px', borderRadius: '4px', fontSize: '13px', marginBottom: '16px', fontWeight: 500 }}>
+                    {pwdModalError}
+                  </div>
+                )}
+                <div className="form-field" style={{ marginBottom: '20px', width: '100%', position: 'relative' }}>
+                  <label style={{ display: 'block', fontSize: '13px', color: '#8c8c8c', marginBottom: '8px' }}>Old Password*</label>
+                  <input 
+                    type={showOldPassword ? "text" : "password"}
+                    value={pwdFormData.oldPassword}
+                    onChange={(e) => { setPwdFormData({...pwdFormData, oldPassword: e.target.value}); setPwdFormErrors({...pwdFormErrors, oldPassword: ''}); }}
+                    placeholder="Enter old password"
+                    style={{ 
+                      width: '100%', 
+                      padding: '10px 40px 10px 10px', 
+                      borderRadius: '4px', 
+                      border: `1px solid ${pwdFormErrors.oldPassword ? '#d32f2f' : '#d9d9d9'}`, 
+                      outline: 'none', 
+                      fontSize: '14px' 
+                    }}
+                  />
+                  <span 
+                    onClick={() => setShowOldPassword(!showOldPassword)}
+                    style={{ position: 'absolute', right: '10px', top: '40px', cursor: 'pointer', color: '#8c8c8c' }}
+                  >
+                    {showOldPassword ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                    ) : (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    )}
+                  </span>
+                  {pwdFormErrors.oldPassword && <div style={{ color: '#d32f2f', fontSize: '11px', marginTop: '4px' }}>{pwdFormErrors.oldPassword}</div>}
+                </div>
+                
+                <div className="form-field" style={{ marginBottom: '10px', width: '100%', position: 'relative' }}>
+                  <label style={{ display: 'block', fontSize: '13px', color: '#8c8c8c', marginBottom: '8px' }}>New Password*</label>
+                  <input 
+                    type={showNewPassword ? "text" : "password"}
+                    value={pwdFormData.newPassword}
+                    onChange={(e) => { setPwdFormData({...pwdFormData, newPassword: e.target.value}); setPwdFormErrors({...pwdFormErrors, newPassword: ''}); }}
+                    placeholder="Enter new password"
+                    style={{ 
+                      width: '100%', 
+                      padding: '10px 40px 10px 10px', 
+                      borderRadius: '4px', 
+                      border: `1px solid ${pwdFormErrors.newPassword ? '#d32f2f' : '#d9d9d9'}`, 
+                      outline: 'none', 
+                      fontSize: '14px' 
+                    }}
+                  />
+                  <span 
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    style={{ position: 'absolute', right: '10px', top: '40px', cursor: 'pointer', color: '#8c8c8c' }}
+                  >
+                    {showNewPassword ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                    ) : (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    )}
+                  </span>
+                  {pwdFormErrors.newPassword && <div style={{ color: '#d32f2f', fontSize: '11px', marginTop: '4px' }}>{pwdFormErrors.newPassword}</div>}
+                </div>
+              </div>
+              <div className="nsdl-modal-footer" style={{ gap: '12px' }}>
+                <button 
+                  type="button"
+                  onClick={() => { setShowChangePwdModal(false); setPwdFormData({oldPassword: '', newPassword: ''}); setPwdFormErrors({oldPassword: '', newPassword: ''}); }}
+                  style={{ color: '#8c8c8c', textTransform: 'none', flex: 1, border: '1px solid #f0f0f0', borderRadius: '4px' }}
+                  disabled={isPwdProcessing}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  style={{ color: '#fff', background: '#a51010', flex: 1, borderRadius: '4px', textTransform: 'uppercase' }}
+                  disabled={isPwdProcessing}
+                >
+                  {isPwdProcessing ? 'Processing...' : 'Submit'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Verify OTP Modal */}
+      {showPwdOtpModal && (
+        <div className="nsdl-modal-overlay" style={{ zIndex: 16000 }}>
+          <div className="nsdl-modal" style={{ width: '400px' }}>
+            <div className="nsdl-modal-header">Verify OTP</div>
+            <form onSubmit={handleVerifyPasswordOtpSubmit}>
+              <div className="nsdl-modal-body" style={{ textAlign: 'left', padding: '24px 32px' }}>
+                <p style={{ fontSize: '13px', color: '#595959', marginBottom: '20px', textAlign: 'center' }}>
+                  An OTP has been sent to your registered mobile number. Please enter it below to confirm your password change.
+                </p>
+                <div className="form-field" style={{ marginBottom: '10px', width: '100%' }}>
+                  <label style={{ display: 'block', fontSize: '13px', color: '#8c8c8c', marginBottom: '8px' }}>Enter OTP*</label>
+                  <input 
+                    type="text"
+                    value={pwdOtpValue}
+                    onChange={(e) => { setPwdOtpValue(e.target.value); setPwdOtpError(''); }}
+                    placeholder="Enter 6-digit OTP"
+                    maxLength={6}
+                    style={{ 
+                      width: '100%', 
+                      padding: '12px', 
+                      borderRadius: '4px', 
+                      border: `1px solid ${pwdOtpError ? '#d32f2f' : '#d9d9d9'}`, 
+                      outline: 'none', 
+                      fontSize: '18px',
+                      letterSpacing: '8px',
+                      textAlign: 'center',
+                      fontWeight: 'bold'
+                    }}
+                  />
+                  {pwdOtpError && <div style={{ color: '#d32f2f', fontSize: '11px', marginTop: '4px' }}>{pwdOtpError}</div>}
+                </div>
+              </div>
+              <div className="nsdl-modal-footer" style={{ gap: '12px' }}>
+                <button 
+                  type="button"
+                  onClick={() => { setShowPwdOtpModal(false); setPwdOtpValue(''); setPwdOtpError(''); }}
+                  style={{ color: '#8c8c8c', textTransform: 'none', flex: 1, border: '1px solid #f0f0f0', borderRadius: '4px' }}
+                  disabled={isPwdOtpProcessing}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  style={{ color: '#fff', background: '#a51010', flex: 1, borderRadius: '4px', textTransform: 'uppercase' }}
+                  disabled={isPwdOtpProcessing}
+                >
+                  {isPwdOtpProcessing ? 'Verifying...' : 'Verify'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notifications */}
+      <div style={{ position: 'fixed', top: '24px', right: '24px', zIndex: 100000, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {toasts.map(toast => (
+          <div key={toast.id} style={{ 
+            minWidth: '350px', 
+            background: toast.type === 'success' ? '#f6ffed' : '#fff1f0', 
+            border: `1px solid ${toast.type === 'success' ? '#b7eb8f' : '#ffa39e'}`,
+            padding: '16px 20px',
+            borderRadius: '6px',
+            boxShadow: '0 6px 16px rgba(0,0,0,0.12)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            animation: 'toastSlideIn 0.3s cubic-bezier(0.2, 0, 0, 1)',
+            position: 'relative',
+            overflow: 'hidden'
+          }}>
+             <div style={{ 
+                position: 'absolute', 
+                bottom: 0, 
+                left: 0, 
+                height: '3px', 
+                background: toast.type === 'success' ? '#52c41a' : '#f5222d',
+                width: '100%',
+                animation: 'toastProgress 5s linear forwards'
+             }}></div>
+            <div style={{ color: toast.type === 'success' ? '#52c41a' : '#f5222d', fontSize: '20px' }}>
+              {toast.type === 'success' ? '✓' : '✕'}
+            </div>
+            <div style={{ flex: 1 }}>
+               <div style={{ fontSize: '14px', fontWeight: 600, color: '#262626' }}>{toast.type === 'success' ? 'Success' : 'Error'}</div>
+               <div style={{ fontSize: '13px', color: '#595959', marginTop: '2px' }}>{toast.message}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <style>{`
+        @keyframes toastSlideIn {
+          from { transform: translateX(100%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes toastProgress {
+          from { width: 100%; }
+          to { width: 0; }
+        }
+      `}</style>
     </div>
   );
 };

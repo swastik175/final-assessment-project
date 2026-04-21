@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { loginUser, sendForgotPasswordOtp, verifyForgotPasswordOtp } from '../services/authService';
+import { loginUser, sendForgotPasswordOtp, verifyForgotPasswordOtp, sendChangePasswordOtp, updatePasswordUsingOldPassword } from '../services/authService';
 
 const LoginForm = ({ onLoginSuccess }) => {
   const [showPassword, setShowPassword] = useState(false);
@@ -16,6 +16,9 @@ const LoginForm = ({ onLoginSuccess }) => {
   const [cpForm, setCpForm] = useState({ oldPwd: '', newPwd: '', confirmPwd: '' });
   const [showCpPwd, setShowCpPwd] = useState({ old: false, new: false, confirm: false });
   const [cpError, setCpError] = useState('');
+  const [showCpOtp, setShowCpOtp] = useState(false);
+  const [cpOtpValue, setCpOtpValue] = useState('');
+  const [tempToken, setTempToken] = useState('');
   
   // Forgot Password State
   const [isForgotPwd, setIsForgotPwd] = useState(false);
@@ -26,6 +29,16 @@ const LoginForm = ({ onLoginSuccess }) => {
   const [showOtpVerify, setShowOtpVerify] = useState(false);
   const [otp, setOtp] = useState('');
   const [otpError, setOtpError] = useState('');
+  
+  // Toast Notifications State
+  const [toasts, setToasts] = useState([]);
+  const addToast = (message, type = 'success') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 5000);
+  };
 
   const validatePassword = (val) => {
     // NSDL Rules: Uppercase, lowercase, number, special char, 8-16 chars
@@ -84,6 +97,7 @@ const LoginForm = ({ onLoginSuccess }) => {
       if (resetRequired) {
         console.warn('⚠️ ACTION REQUIRED: Password reset is mandatory for this user.');
         setIsLoading(false);
+        setTempToken(token); // Store token for password change API
         setCpForm({ oldPwd: password, newPwd: '', confirmPwd: '' });
         setShowChangePwd(true);
         return; // HALT HERE - Do not proceed to dashboard success modal
@@ -96,19 +110,14 @@ const LoginForm = ({ onLoginSuccess }) => {
         sessionStorage.setItem('user_data', JSON.stringify(response));
         sessionStorage.setItem('login_timestamp', Date.now().toString());
         
-        setModal({
-          show: true,
-          title: 'SUCCESS',
-          message: 'Logged in Successfully, Please click on okay to proceed',
-          type: 'success'
-        });
+        addToast('Logged in Successfully! Redirecting...', 'success');
+        
+        // Delay redirection slightly so user can see toast
+        setTimeout(() => {
+          if (onLoginSuccess) onLoginSuccess();
+        }, 1500);
       } else {
-        setModal({
-          show: true,
-          title: 'FAILED',
-          message: 'Invalid Username or Password.',
-          type: 'error'
-        });
+        addToast(response?.statusDesc || response?.message || 'Invalid Username or Password.', 'error');
       }
     } catch (error) {
       console.error('Login process error:', error);
@@ -121,12 +130,7 @@ const LoginForm = ({ onLoginSuccess }) => {
         msg = error.response.data.message;
       }
       
-      setModal({
-        show: true,
-        title: 'FAILED',
-        message: msg,
-        type: 'error'
-      });
+      addToast(msg, 'error');
     } finally {
       setIsLoading(false);
     }
@@ -151,19 +155,61 @@ const LoginForm = ({ onLoginSuccess }) => {
       return setCpError('New Password cannot be same as old.');
     }
 
-    // Logic for "Verify Otp" - Collect data and wait for next step
-    console.log('Verifying OTP for password change:', {
-      old: cpForm.oldPwd,
-      new: cpForm.newPwd,
-      confirm: cpForm.confirmPwd
-    });
-    
-    // For now, just show a success or processing log as per user request
     setIsLoading(true);
-    setTimeout(() => {
+    try {
+      const payload = {
+        oldPassword: cpForm.oldPwd,
+        newPassword: cpForm.newPwd
+      };
+      const resp = await sendChangePasswordOtp(tempToken, payload);
+      
+      if (resp?.statusCode == 200 || resp?.status == 'SUCCESS') {
+        addToast(resp?.statusDesc || 'OTP sent to registered mobile number.', 'success');
+        setShowCpOtp(true);
+      } else {
+        setCpError(resp?.statusDesc || resp?.message || 'Failed to send OTP.');
+      }
+    } catch (error) {
+      console.error('Mandatory reset OTP failed:', error);
+      setCpError(error.response?.data?.statusDesc || error.response?.data?.message || 'Server error. Please try again.');
+    } finally {
       setIsLoading(false);
-      alert('OTP Verification Triggered. Proceeding to next step...');
-    }, 1000);
+    }
+  };
+
+  const handleMandatoryOtpVerify = async (e) => {
+    e.preventDefault();
+    if (!cpOtpValue || cpOtpValue.length < 6) {
+      return addToast('Please enter a valid 6-digit OTP', 'error');
+    }
+
+    setIsLoading(true);
+    try {
+      const payload = {
+        oldPassword: cpForm.oldPwd,
+        newPassword: cpForm.newPwd,
+        otp: cpOtpValue
+      };
+      
+      const resp = await updatePasswordUsingOldPassword(tempToken, payload);
+      
+      if (resp?.statusCode == 200 || resp?.status == 'SUCCESS') {
+        addToast('Password changed successfully! Please login with your new password.', 'success');
+        setShowChangePwd(false);
+        setShowCpOtp(false);
+        setUsername('');
+        setPassword('');
+        setCpForm({ oldPwd: '', newPwd: '', confirmPwd: '' });
+        setCpOtpValue('');
+      } else {
+        addToast(resp?.statusDesc || resp?.message || 'Failed to update password.', 'error');
+      }
+    } catch (error) {
+      console.error('Mandatory verify failed:', error);
+      addToast(error.response?.data?.statusDesc || error.response?.data?.message || 'Server error. Please try again.', 'error');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleForgotSubmit = async (e) => {
@@ -178,12 +224,7 @@ const LoginForm = ({ onLoginSuccess }) => {
       const resp = await sendForgotPasswordOtp(forgotUsername);
       console.log('Forgot Pwd Response:', resp);
       
-      setModal({
-        show: true,
-        title: resp?.statusCode == 200 || resp?.status == 'SUCCESS' ? 'SUCCESS' : 'FAILED',
-        message: resp?.statusDesc || resp?.message || 'Operation processed.',
-        type: resp?.statusCode == 200 || resp?.status == 'SUCCESS' ? 'success' : 'error'
-      });
+      addToast(resp?.statusDesc || resp?.message || 'Operation processed.', resp?.statusCode == 200 || resp?.status == 'SUCCESS' ? 'success' : 'error');
 
       if (resp?.statusCode == 200 || resp?.status == 'SUCCESS') {
         setIsForgotPwd(false);
@@ -191,12 +232,7 @@ const LoginForm = ({ onLoginSuccess }) => {
       }
     } catch (error) {
        console.error('Forgot password fail:', error);
-       setModal({
-         show: true,
-         title: 'FAILED',
-         message: error.response?.data?.message || 'Something went wrong, please try again!',
-         type: 'error'
-       });
+       addToast(error.response?.data?.statusDesc || error.response?.data?.message || 'Something went wrong, please try again!', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -218,12 +254,7 @@ const LoginForm = ({ onLoginSuccess }) => {
       const resp = await verifyForgotPasswordOtp(forgotUsername, otp);
       console.log('OTP Verify Response:', resp);
 
-      setModal({
-        show: true,
-        title: resp?.statusCode == 200 || resp?.status == 'SUCCESS' ? 'SUCCESS' : 'FAILED',
-        message: resp?.statusDesc || resp?.message || 'Operation completed.',
-        type: resp?.statusCode == 200 || resp?.status == 'SUCCESS' ? 'success' : 'error'
-      });
+      addToast(resp?.statusDesc || resp?.message || 'Operation completed.', resp?.statusCode == 200 || resp?.status == 'SUCCESS' ? 'success' : 'error');
 
       if (resp?.statusCode == 200 || resp?.status == 'SUCCESS') {
         setShowOtpVerify(false);
@@ -416,116 +447,171 @@ const LoginForm = ({ onLoginSuccess }) => {
               position: 'relative',
               animation: 'nsdlModalFade 0.3s ease-out'
             }}>
-              <h2 style={{ margin: '0 0 12px', fontSize: '26px', fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.5px' }}>Change Password</h2>
-              <p style={{ margin: '0 0 32px', fontSize: '15px', color: '#666', fontWeight: 400 }}>Enter your old password and new password</p>
+              {!showCpOtp ? (
+                <>
+                  <h2 style={{ margin: '0 0 12px', fontSize: '26px', fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.5px' }}>Change Password</h2>
+                  <p style={{ margin: '0 0 32px', fontSize: '15px', color: '#666', fontWeight: 400 }}>Enter your old password and new password</p>
 
-              <form onSubmit={handleChangePasswordSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px', alignItems: 'center', width: '100%' }}>
-                <div style={{ position: 'relative', width: '100%' }}>
-                  <input
-                    type={showCpPwd.old ? 'text' : 'password'}
-                    placeholder="Old Password*"
-                    value={cpForm.oldPwd}
-                    onChange={e => setCpForm({...cpForm, oldPwd: e.target.value})}
-                    style={{ 
-                      width: '100%', 
-                      height: '52px', 
-                      padding: '0 48px 0 16px', 
-                      border: '1px solid #e0e0e0', 
-                      borderRadius: '6px', 
-                      fontSize: '15px', 
-                      outline: 'none', 
-                      boxSizing: 'border-box',
-                      display: 'block'
-                    }}
-                  />
-                  <button type="button" onClick={() => setShowCpPwd({...showCpPwd, old: !showCpPwd.old})} style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#8c8c8c', display: 'flex', alignItems: 'center', padding: 0 }}>
-                    {showCpPwd.old ? 
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> : 
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
-                    }
-                  </button>
-                </div>
+                  <form onSubmit={handleChangePasswordSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px', alignItems: 'center', width: '100%' }}>
+                    <div style={{ position: 'relative', width: '100%' }}>
+                      <input
+                        type={showCpPwd.old ? 'text' : 'password'}
+                        placeholder="Old Password*"
+                        value={cpForm.oldPwd}
+                        onChange={e => setCpForm({...cpForm, oldPwd: e.target.value})}
+                        style={{ 
+                          width: '100%', 
+                          height: '52px', 
+                          padding: '0 48px 0 16px', 
+                          border: '1px solid #e0e0e0', 
+                          borderRadius: '6px', 
+                          fontSize: '15px', 
+                          outline: 'none', 
+                          boxSizing: 'border-box',
+                          display: 'block'
+                        }}
+                      />
+                      <button type="button" onClick={() => setShowCpPwd({...showCpPwd, old: !showCpPwd.old})} style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#8c8c8c', display: 'flex', alignItems: 'center', padding: 0 }}>
+                        {showCpPwd.old ? 
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> : 
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                        }
+                      </button>
+                    </div>
 
-                <div style={{ position: 'relative', width: '100%' }}>
-                  <input
-                    type={showCpPwd.new ? 'text' : 'password'}
-                    placeholder="New Password*"
-                    value={cpForm.newPwd}
-                    onChange={e => setCpForm({...cpForm, newPwd: e.target.value})}
-                    style={{ 
-                      width: '100%', 
-                      height: '52px', 
-                      padding: '0 48px 0 16px', 
-                      border: '1px solid #e0e0e0', 
-                      borderRadius: '6px', 
-                      fontSize: '15px', 
-                      outline: 'none',
-                      boxSizing: 'border-box',
-                      display: 'block'
-                    }}
-                  />
-                  <button type="button" onClick={() => setShowCpPwd({...showCpPwd, new: !showCpPwd.new})} style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#8c8c8c', display: 'flex', alignItems: 'center', padding: 0 }}>
-                    {showCpPwd.new ? 
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> : 
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
-                    }
-                  </button>
-                </div>
+                    <div style={{ position: 'relative', width: '100%' }}>
+                      <input
+                        type={showCpPwd.new ? 'text' : 'password'}
+                        placeholder="New Password*"
+                        value={cpForm.newPwd}
+                        onChange={e => setCpForm({...cpForm, newPwd: e.target.value})}
+                        style={{ 
+                          width: '100%', 
+                          height: '52px', 
+                          padding: '0 48px 0 16px', 
+                          border: '1px solid #e0e0e0', 
+                          borderRadius: '6px', 
+                          fontSize: '15px', 
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                          display: 'block'
+                        }}
+                      />
+                      <button type="button" onClick={() => setShowCpPwd({...showCpPwd, new: !showCpPwd.new})} style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#8c8c8c', display: 'flex', alignItems: 'center', padding: 0 }}>
+                        {showCpPwd.new ? 
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> : 
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                        }
+                      </button>
+                    </div>
 
-                <div style={{ position: 'relative', width: '100%' }}>
-                  <input
-                    type={showCpPwd.confirm ? 'text' : 'password'}
-                    placeholder="Confirm Password*"
-                    value={cpForm.confirmPwd}
-                    onChange={e => setCpForm({...cpForm, confirmPwd: e.target.value})}
-                    style={{ 
-                      width: '100%', 
-                      height: '52px', 
-                      padding: '0 48px 0 16px', 
-                      border: '1px solid #e0e0e0', 
-                      borderRadius: '6px', 
-                      fontSize: '15px', 
-                      outline: 'none',
-                      boxSizing: 'border-box',
-                      display: 'block'
-                    }}
-                  />
-                  <button type="button" onClick={() => setShowCpPwd({...showCpPwd, confirm: !showCpPwd.confirm})} style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#8c8c8c', display: 'flex', alignItems: 'center', padding: 0 }}>
-                    {showCpPwd.confirm ? 
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> : 
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
-                    }
-                  </button>
-                </div>
+                    <div style={{ position: 'relative', width: '100%' }}>
+                      <input
+                        type={showCpPwd.confirm ? 'text' : 'password'}
+                        placeholder="Confirm Password*"
+                        value={cpForm.confirmPwd}
+                        onChange={e => setCpForm({...cpForm, confirmPwd: e.target.value})}
+                        style={{ 
+                          width: '100%', 
+                          height: '52px', 
+                          padding: '0 48px 0 16px', 
+                          border: '1px solid #e0e0e0', 
+                          borderRadius: '6px', 
+                          fontSize: '15px', 
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                          display: 'block'
+                        }}
+                      />
+                      <button type="button" onClick={() => setShowCpPwd({...showCpPwd, confirm: !showCpPwd.confirm})} style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#8c8c8c', display: 'flex', alignItems: 'center', padding: 0 }}>
+                        {showCpPwd.confirm ? 
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> : 
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                        }
+                      </button>
+                    </div>
 
-                {cpError && <div style={{ color: '#d32f2f', fontSize: '13px', fontWeight: 500, textAlign: 'left', width: '100%', marginTop: '-8px' }}>⚠️ {cpError}</div>}
+                    {cpError && <div style={{ color: '#d32f2f', fontSize: '13px', fontWeight: 500, textAlign: 'left', width: '100%', marginTop: '-8px' }}>⚠️ {cpError}</div>}
 
-                <div style={{ display: 'flex', gap: '16px', marginTop: '12px', width: '100%' }}>
-                  <button type="button" onClick={handleCancelReset} style={{ 
-                    flex: 1, 
-                    height: '50px', 
-                    background: '#fff', 
-                    border: '1.5px solid #8B0304', 
-                    color: '#8B0304', 
-                    borderRadius: '8px', 
-                    cursor: 'pointer', 
-                    fontWeight: 700,
-                    fontSize: '15px'
-                  }}>Cancel</button>
-                  <button type="submit" style={{ 
-                    flex: 1, 
-                    height: '50px', 
-                    background: '#8B0304', 
-                    border: 'none', 
-                    color: '#fff', 
-                    borderRadius: '8px', 
-                    cursor: 'pointer', 
-                    fontWeight: 700,
-                    fontSize: '15px',
-                    boxShadow: '0 4px 12px rgba(139, 3, 4, 0.25)'
-                  }}>Verify Otp</button>
-                </div>
-              </form>
+                    <div style={{ display: 'flex', gap: '16px', marginTop: '12px', width: '100%' }}>
+                      <button type="button" onClick={handleCancelReset} style={{ 
+                        flex: 1, 
+                        height: '50px', 
+                        background: '#fff', 
+                        border: '1.5px solid #8B0304', 
+                        color: '#8B0304', 
+                        borderRadius: '8px', 
+                        cursor: 'pointer', 
+                        fontWeight: 700,
+                        fontSize: '15px'
+                      }}>Cancel</button>
+                      <button type="submit" style={{ 
+                        flex: 1, 
+                        height: '50px', 
+                        background: '#8B0304', 
+                        border: 'none', 
+                        color: '#fff', 
+                        borderRadius: '8px', 
+                        cursor: 'pointer', 
+                        fontWeight: 700,
+                        fontSize: '15px',
+                        boxShadow: '0 4px 12px rgba(139, 3, 4, 0.25)'
+                      }}>Verify Otp</button>
+                    </div>
+                  </form>
+                </>
+              ) : (
+                <>
+                  <h2 style={{ margin: '0 0 12px', fontSize: '26px', fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.5px' }}>Verify OTP</h2>
+                  <p style={{ margin: '0 0 32px', fontSize: '15px', color: '#666', fontWeight: 400 }}>Enter the 6-digit OTP sent to your registered mobile number</p>
+                  
+                  <form onSubmit={handleMandatoryOtpVerify} style={{ display: 'flex', flexDirection: 'column', gap: '24px', alignItems: 'center', width: '100%' }}>
+                    <input
+                      type="text"
+                      placeholder="Enter 6-digit OTP"
+                      maxLength={6}
+                      value={cpOtpValue}
+                      onChange={e => setCpOtpValue(e.target.value.replace(/\D/g, ''))}
+                      style={{ 
+                        width: '100%', 
+                        height: '56px', 
+                        padding: '0 16px', 
+                        border: '1.5px solid #8B0304', 
+                        borderRadius: '8px', 
+                        fontSize: '20px', 
+                        textAlign: 'center',
+                        letterSpacing: '8px',
+                        fontWeight: 700,
+                        outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                    
+                    <div style={{ display: 'flex', gap: '16px', width: '100%' }}>
+                      <button type="button" onClick={() => setShowCpOtp(false)} style={{ 
+                        flex: 1, 
+                        height: '50px', 
+                        background: '#fff', 
+                        border: '1px solid #d9d9d9', 
+                        color: '#595959', 
+                        borderRadius: '8px', 
+                        cursor: 'pointer', 
+                        fontWeight: 600
+                      }}>Back</button>
+                      <button type="submit" style={{ 
+                        flex: 1, 
+                        height: '50px', 
+                        background: '#8B0304', 
+                        color: '#fff', 
+                        border: 'none', 
+                        borderRadius: '8px', 
+                        cursor: 'pointer', 
+                        fontWeight: 700
+                      }}>Confirm Change</button>
+                    </div>
+                  </form>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -543,6 +629,53 @@ const LoginForm = ({ onLoginSuccess }) => {
           </div>
         )}
       </div>
+      {/* Toast Notifications */}
+      <div style={{ position: 'fixed', top: '24px', right: '24px', zIndex: 100000, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {toasts.map(toast => (
+          <div key={toast.id} style={{ 
+            minWidth: '350px', 
+            background: toast.type === 'success' ? '#f6ffed' : '#fff1f0', 
+            border: `1px solid ${toast.type === 'success' ? '#b7eb8f' : '#ffa39e'}`,
+            padding: '16px 20px',
+            borderRadius: '6px',
+            boxShadow: '0 6px 16px rgba(0,0,0,0.12)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            animation: 'toastSlideIn 0.3s cubic-bezier(0.2, 0, 0, 1)',
+            position: 'relative',
+            overflow: 'hidden'
+          }}>
+             <div style={{ 
+                position: 'absolute', 
+                bottom: 0, 
+                left: 0, 
+                height: '3px', 
+                background: toast.type === 'success' ? '#52c41a' : '#f5222d',
+                width: '100%',
+                animation: 'toastProgress 5s linear forwards'
+             }}></div>
+            <div style={{ color: toast.type === 'success' ? '#52c41a' : '#f5222d', fontSize: '20px' }}>
+              {toast.type === 'success' ? '✓' : '✕'}
+            </div>
+            <div style={{ flex: 1 }}>
+               <div style={{ fontSize: '14px', fontWeight: 600, color: '#262626' }}>{toast.type === 'success' ? 'Success' : 'Error'}</div>
+               <div style={{ fontSize: '13px', color: '#595959', marginTop: '2px' }}>{toast.message}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <style>{`
+        @keyframes toastSlideIn {
+          from { transform: translateX(100%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes toastProgress {
+          from { width: 100%; }
+          to { width: 0; }
+        }
+      `}</style>
     </>
   );
 };

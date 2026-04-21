@@ -359,3 +359,63 @@ export async function updateCbcStatus(token, data) {
 
   return response.data;
 }
+
+/**
+ * Send OTP for change password
+ * @param {string} token 
+ * @param {object} passwords - { oldPassword, newPassword }
+ */
+export async function sendChangePasswordOtp(token, passwords) {
+  const URL = 'https://services-encr.iserveu.online/dev/nsdlab-internal/user-mgmt/user/send-change-password-otp';
+  
+  const encryptedPayload = encryptPayload(passwords);
+
+  const response = await api.post(
+    URL,
+    { RequestData: encryptedPayload },
+    {
+      headers: {
+        'Authorization': token,
+        'key': FIXED_KEY,
+        'pass_key': 'QC62FQKXT2DQTO43LMWH5A44UKVPQ7LK5Y6HVHRQ3XTIKLDTB6HA',
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  if (response.data && response.data.ResponseData) {
+    return decryptResponse(response.data.ResponseData);
+  }
+
+  return response.data;
+}
+
+/**
+ * Update password using old password and OTP
+ * @param {string} token 
+ * @param {object} data - { oldPassword, newPassword, otp }
+ */
+export async function updatePasswordUsingOldPassword(token, data) {
+  const URL = 'https://services-encr.iserveu.online/dev/nsdlab-internal/user-mgmt/user/update-password-using-old-password';
+  
+  const encryptedPayload = encryptPayload(data);
+
+  const response = await api.post(
+    URL,
+    { RequestData: encryptedPayload },
+    {
+      headers: {
+        'Authorization': token,
+        'key': FIXED_KEY,
+        'pass_key': 'QC62FQKXT2DQTO43LMWH5A44UKVPQ7LK5Y6HVHRQ3XTIKLDTB6HA',
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+
+  if (response.data && response.data.ResponseData) {
+    return decryptResponse(response.data.ResponseData);
+  }
+
+  return response.data;
+}
